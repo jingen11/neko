@@ -1,0 +1,14 @@
+[Unit]
+Description=neko text-to-speech (VOICEVOX engine)
+After=network.target
+
+[Service]
+User=jedev
+Environment=HOME=/home/jedev
+WorkingDirectory=/home/jedev/apps/voicevox/engine
+ExecStart=/home/jedev/apps/voicevox/engine/run --host 127.0.0.1 --port 50021 --cpu_num_threads 4
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

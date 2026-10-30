@@ -22,6 +22,16 @@ neko is a Fastify server that calls three local services:
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
 
+### Running as services (recommended)
+
+`deploy/systemd/` has units for all three neko processes: `neko-stt` (ReazonSpeech on :6006), `neko-voicevox` (:50021) and `neko` (:8081). Install and start them with:
+
+```bash
+sudo ./deploy/install-services.sh
+```
+
+Then manage them with `systemctl status|restart neko neko-stt neko-voicevox` and read logs with `journalctl -u neko -f`. The manual commands below are for debugging or the bake-off.
+
 ### Starting the speech-to-text server
 
 ReazonSpeech (Zipformer transducer, int8) — the model neko uses:

@@ -1,0 +1,22 @@
+[Unit]
+Description=neko speech-to-text (sherpa-onnx + ReazonSpeech)
+After=network.target
+
+[Service]
+User=jedev
+Environment=SHERPA=/home/jedev/apps/sherpa-onnx-v2.0.1-linux-x64-shared
+Environment=MODEL=/home/jedev/models/stt/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01
+Environment=LD_LIBRARY_PATH=/home/jedev/apps/sherpa-onnx-v2.0.1-linux-x64-shared/lib
+# Note: this server has no bind-address option and listens on all interfaces (port 6006).
+ExecStart=/home/jedev/apps/sherpa-onnx-v2.0.1-linux-x64-shared/bin/sherpa-onnx-offline-websocket-server \
+  --port=6006 --num-threads=4 --num-work-threads=2 --max-batch-size=2 --model-type=transducer \
+  --log-file=/dev/null \
+  --tokens=${MODEL}/tokens.txt \
+  --encoder=${MODEL}/encoder-epoch-99-avg-1.int8.onnx \
+  --decoder=${MODEL}/decoder-epoch-99-avg-1.int8.onnx \
+  --joiner=${MODEL}/joiner-epoch-99-avg-1.int8.onnx
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

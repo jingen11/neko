@@ -1,0 +1,15 @@
+[Unit]
+Description=neko server (Japanese-learning pet)
+After=network.target llama-server.service neko-stt.service neko-voicevox.service
+Wants=neko-stt.service neko-voicevox.service
+
+[Service]
+User=jedev
+Environment=HOME=/home/jedev
+WorkingDirectory=/home/jedev/projects/neko/server
+ExecStart=/usr/local/bin/node --env-file-if-exists=.env src/index.ts
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
