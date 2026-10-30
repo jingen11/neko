@@ -1,0 +1,19 @@
+{
+  "name": "neko",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Central gateway for every LLM call to the local llama.cpp server",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.ts",
+    "dev": "node --watch --env-file-if-exists=.env src/index.ts",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "fastify": "^5.12.7"
+  }
+}
