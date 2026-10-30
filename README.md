@@ -44,7 +44,13 @@ sudo hermes gateway install --system --run-as-user jedev --start-now
 curl http://127.0.0.1:8642/health      # {"status": "ok", ...}
 ```
 
-A question takes Hermes about a minute on the local model (it opens the vault notes first). While Hermes is down, answers come from llama.cpp in ~10 s, marked in the app as "the pet's own model".
+neko asks Hermes to answer grammar questions with **Claude Opus 5.5** (`HERMES_MODEL` / `HERMES_PROVIDER`), which needs `ANTHROPIC_API_KEY` in `~/.hermes/.env`. Hermes's own default model stays the local Qwen, and live corrections stay on llama.cpp. If Hermes or the API is unreachable, llama.cpp answers in ~10 s, marked in the app as "the pet's own model".
+
+Answers come back in the language the question was written in (English, Chinese, Malay, Japanese, ...): a quick local call names the language first, and the prompt states it outright. The last 4 questions and answers from the past 12 hours go along with each question, so follow-ups like "and what about で?" work. Every answer card shows which model actually wrote it (e.g. "Hermes · Claude Opus 5.5"), taken from Hermes's `runtime` field, so a silent Hermes fallback to another model is visible.
+
+### Weekly review (Hermes cron)
+
+A Hermes cron job, "neko weekly Japanese review", runs **Sundays at 20:00** (`HERMES_TIMEZONE=Asia/Kuala_Lumpur` in `~/.hermes/.env`) on the local model. It reads the week's notes and writes `~/vault/Japanese/Notes/Weekly/<date>.md`: the week in numbers, 2–3 focus grammar points with your own wrong sentences and new examples, listening trouble spots, and sentences to try on the pet. Manage it with `hermes cron list` / `hermes cron run <id>` / `hermes cron edit <id>`.
 
 ### Starting the speech-to-text server
 
@@ -111,6 +117,7 @@ ssh -L 8081:localhost:8081 <box>
 | `NEKO_VAULT_DIR` | `~/vault/Japanese` | Where learning records are written; empty turns it off |
 | `HERMES_URL` | `http://127.0.0.1:8642` | Hermes API server |
 | `HERMES_KEY` | (none) | Same as `API_SERVER_KEY` in `~/.hermes/.env`; without it, questions go straight to llama.cpp |
+| `HERMES_MODEL` / `HERMES_PROVIDER` | `claude-opus-5-5` / `anthropic` | Model Hermes answers grammar questions with; both empty = Hermes's default model |
 | `NEKO_DATA_DIR` | `server/data` | SQLite database folder (point it elsewhere for tests) |
 
 ## Learning records
@@ -121,7 +128,7 @@ neko keeps every practice turn, mistake, listening miss (asked to repeat, asked 
 Index.md                 totals, weakest grammar points (last 30 days), recent days
 Daily/<date>.md          each sentence with its fix and the pet's reply; listening misses; questions and answers
 Grammar/<point>.md       every mistake on one grammar point, newest first
-Notes/                   free for you and Hermes; neko never writes here
+Notes/                   free for you and Hermes; neko never writes here (Hermes's weekly reviews go in Notes/Weekly/)
 ```
 
 neko owns `Index.md`, `Daily/` and `Grammar/`: they are rewritten after each turn and rebuilt from the database on every start, so edits there are lost. The correction model is shown the grammar point names already on record and reuses them, so repeat mistakes collect in one note.

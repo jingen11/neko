@@ -262,7 +262,7 @@ function showAnswer(m: AnswerMsg) {
   const a = pendingAnswer ?? chat.appendChild(Object.assign(document.createElement("div"), { className: "msg answer" }));
   pendingAnswer = null;
   a.classList.remove("wait");
-  const from = m.source === "hermes" ? "Hermes, from your notes" : "the pet's own model (Hermes is unavailable)";
+  const from = m.source === "hermes" ? `Hermes · <b>${esc(m.model)}</b>, from your notes` : `<b>${esc(m.model)}</b>, the pet's own model (Hermes is unavailable)`;
   a.innerHTML = `<p class="label">Answer</p><div class="body">${markdown(m.text)}</div><p class="src">From ${from} · ${(m.ms / 1000).toFixed(1)} s</p>`;
   if (askMode) sendBtn.disabled = false;
   scrollChat();

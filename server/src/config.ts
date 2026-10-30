@@ -34,4 +34,7 @@ export const config = {
   /** Hermes Agent API server, which answers grammar questions using the vault. */
   hermesUrl: trim(process.env.HERMES_URL ?? "http://127.0.0.1:8642"),
   hermesKey: process.env.HERMES_KEY ?? "",
+  /** Model Hermes uses for grammar questions; both empty = Hermes's own default model. */
+  hermesModel: process.env.HERMES_MODEL ?? "claude-opus-5-5",
+  hermesProvider: process.env.HERMES_PROVIDER ?? "anthropic",
 };

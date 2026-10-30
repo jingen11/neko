@@ -147,6 +147,7 @@ export interface AnswerMsg {
   question: string;
   text: string; // plain text with light markdown (**bold**, "- " lists)
   source: "hermes" | "local"; // local = Hermes unavailable, answered by the pet's own model
+  model: string; // the model that actually answered, e.g. "Claude Opus 5.5" or "Qwen3.6"
   ms: number;
 }
 

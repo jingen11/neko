@@ -157,6 +157,7 @@ h1 { font: 500 var(--fs-title)/1.15 var(--serif); letter-spacing: -0.01em; }
 .msg.answer .body code { font: inherit; background: var(--pill-neutral-bg); padding: 0 4px; border-radius: 4px; }
 .msg.answer.wait .body { color: var(--muted); }
 .msg.answer .src { margin-top: 8px; font-size: var(--fs-small); color: var(--muted); }
+.msg.answer .src b { font-weight: 600; color: var(--text); }
 .review-list .ask-about { margin-top: 8px; }
 del { color: var(--negative); }
 ins { color: var(--positive); text-decoration: none; font-weight: 600; }
