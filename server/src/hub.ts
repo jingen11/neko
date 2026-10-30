@@ -7,7 +7,9 @@ import type { ChatMessage } from "./llm.ts";
 import * as pet from "./pet.ts";
 import { transcribe } from "./stt.ts";
 import { speak } from "./tts.ts";
-import { correct, petReply } from "./tutor.ts";
+import { answerQuestion } from "./ask.ts";
+import * as records from "./records.ts";
+import { correct, petReply, type Correction, type PetReply } from "./tutor.ts";
 
 /**
  * The pet's "brain" for connected clients (browser now, ESP32 board later).
@@ -23,6 +25,7 @@ interface Client {
   micRate: number;
   micBytes: number;
   busy: boolean;
+  asking: boolean;
 }
 
 const MAX_MIC_SECONDS = 30;
@@ -31,6 +34,8 @@ const AUDIO_CHUNK_SAMPLES = 4096;
 const clients = new Set<Client>();
 const history: ChatMessage[] = []; // shared conversation (the pet remembers the last few turns)
 let lastSay: { ja: string; en: string; mood: Mood } | null = null;
+/** Recent pet lines by id, so a later "reveal" can be recorded as a listening miss (once per line). */
+const recentSays = new Map<string, { ja: string; en: string; revealed: boolean }>();
 let revertTimer: NodeJS.Timeout | undefined;
 let eatNext = false; // show the "eat" animation once the pet finishes talking
 let log: FastifyBaseLogger;
@@ -62,6 +67,8 @@ setInterval(() => {
 async function say(to: Client, ja: string, en: string, mood: Mood, slow = false) {
   const id = randomUUID();
   lastSay = { ja, en, mood };
+  recentSays.set(id, { ja, en, revealed: false });
+  if (recentSays.size > 50) recentSays.delete(recentSays.keys().next().value!);
   sendAll({ type: "say", id, ja, en, mood });
   const { wav } = await speak(ja, { speed: slow ? 0.75 : undefined });
   const voice = wavToPcm16(wav);
@@ -99,29 +106,59 @@ async function onConfirm(c: Client, text: string) {
   setState("think", "curious", 60_000);
   const ctx = history.slice(-12);
   const t0 = performance.now();
+  let reply: PetReply | undefined;
+  let correction: Correction | undefined;
+  // allSettled: if one half fails, the other still finishes and the turn is still recorded
+  const results = await Promise.allSettled([
+    petReply([...ctx, { role: "user", content: text }]).then(async ({ data, ms }) => {
+      reply = data;
+      history.push({ role: "user", content: text }, { role: "assistant", content: data.ja });
+      history.splice(0, Math.max(0, history.length - 24));
+      log.info(`reply ${ms}ms`);
+      await say(c, data.ja, data.en, data.mood);
+      log.info(`pet speaking after ${Math.round(performance.now() - t0)}ms`);
+    }),
+    correct(text, ctx).then(({ data, ms }) => {
+      correction = data;
+      log.info(`correction ${ms}ms`);
+      send(c, { type: "correction", text, ...data });
+      pet.recordPractice(text, data.is_correct, data.mistakes.length);
+      if (revertTimer) eatNext = true; // still talking: eat afterwards
+      else setState("eat", "happy", 1800);
+    }),
+  ]);
   try {
-    await Promise.all([
-      petReply([...ctx, { role: "user", content: text }]).then(async ({ data, ms }) => {
-        history.push({ role: "user", content: text }, { role: "assistant", content: data.ja });
-        history.splice(0, Math.max(0, history.length - 24));
-        log.info(`reply ${ms}ms`);
-        await say(c, data.ja, data.en, data.mood);
-        log.info(`pet speaking after ${Math.round(performance.now() - t0)}ms`);
-      }),
-      correct(text, ctx).then(({ data, ms }) => {
-        log.info(`correction ${ms}ms`);
-        send(c, { type: "correction", text, ...data });
-        pet.recordPractice(text, data.is_correct, data.mistakes.length);
-        if (revertTimer) eatNext = true; // still talking: eat afterwards
-        else setState("eat", "happy", 1800);
-      }),
-    ]);
+    if (correction) records.logTurn(text, correction, reply);
+    const failed = results.find((r) => r.status === "rejected");
+    if (failed) throw failed.reason;
   } catch (err) {
     log.error({ err }, "turn failed");
     send(c, { type: "error", message: (err as Error).message });
     setState("sad", "worried", 2000);
   } finally {
     c.busy = false;
+  }
+}
+
+/** A grammar question: Hermes answers from the vault (or the local model if Hermes is down). */
+async function onAsk(c: Client, question: string) {
+  question = question.trim();
+  if (!question) return;
+  if (c.asking) return send(c, { type: "error", message: "Still looking into your last question." });
+  c.asking = true;
+  setState("think", "curious", 200_000);
+  try {
+    const a = await answerQuestion(question, log);
+    log.info(`answer from ${a.source} in ${a.ms}ms`);
+    send(c, { type: "answer", question, text: a.text, source: a.source, ms: a.ms });
+    records.logAsk(question, a.text, a.source === "hermes" ? "Hermes" : "the local model (Hermes unavailable)");
+    setState("happy", "happy", 1500);
+  } catch (err) {
+    log.error({ err }, "question failed");
+    send(c, { type: "error", message: `Couldn't answer that: ${(err as Error).message}` });
+    setState("sad", "worried", 2000);
+  } finally {
+    c.asking = false;
   }
 }
 
@@ -156,14 +193,25 @@ async function onMessage(c: Client, msg: ClientMessage) {
     case "touch":
       return onTouch(c);
     case "repeat":
-      if (lastSay) return say(c, lastSay.ja, lastSay.en, lastSay.mood, msg.slow);
+      if (!lastSay) return;
+      records.logListening(msg.slow ? "slow" : "repeat", lastSay);
+      return say(c, lastSay.ja, lastSay.en, lastSay.mood, msg.slow);
+    case "reveal": {
+      const line = recentSays.get(msg.sayId);
+      if (line && !line.revealed) {
+        line.revealed = true;
+        records.logListening("english", line);
+      }
       return;
+    }
+    case "ask":
+      return onAsk(c, msg.text);
   }
 }
 
 export function attach(ws: WebSocket, logger: FastifyBaseLogger) {
   log = logger;
-  const c: Client = { id: randomUUID(), ws, mic: null, micRate: 16000, micBytes: 0, busy: false };
+  const c: Client = { id: randomUUID(), ws, mic: null, micRate: 16000, micBytes: 0, busy: false, asking: false };
   clients.add(c);
   ws.on("message", (data, isBinary) => {
     const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);

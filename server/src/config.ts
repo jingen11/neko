@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 
 const trim = (s: string) => s.replace(/\/+$/, "");
@@ -27,5 +28,10 @@ export const config = {
   petName: process.env.NEKO_PET_NAME ?? "ねこ",
   /** Your time zone: decides the pet's bedtime and what counts as "today" for the streak. */
   tz: timeZone(),
-  dataDir: path.resolve(import.meta.dirname, "../data"),
+  dataDir: process.env.NEKO_DATA_DIR ?? path.resolve(import.meta.dirname, "../data"),
+  /** Where neko writes learning records for you and Hermes (Obsidian vault folder). Empty string turns it off. */
+  vaultDir: process.env.NEKO_VAULT_DIR ?? path.join(os.homedir(), "vault", "Japanese"),
+  /** Hermes Agent API server, which answers grammar questions using the vault. */
+  hermesUrl: trim(process.env.HERMES_URL ?? "http://127.0.0.1:8642"),
+  hermesKey: process.env.HERMES_KEY ?? "",
 };

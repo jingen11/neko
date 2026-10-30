@@ -1,5 +1,6 @@
 import { config } from "./config.ts";
 import { chatJson, type ChatMessage } from "./llm.ts";
+import { knownPoints } from "./records.ts";
 
 // ── Grammar correction ──────────────────────────────────────────────────────
 
@@ -47,6 +48,9 @@ export function correct(sentence: string, context: ChatMessage[] = []) {
     .slice(-4)
     .map((m) => `${m.role === "user" ? "Learner" : "Pet"}: ${m.content}`)
     .join("\n");
+  // Reusing names lets the vault group repeat mistakes under one grammar note.
+  const known = knownPoints();
+  const reuse = known.length ? `\n- Grammar points already on record: ${known.join("; ")}. If one fits, use that name exactly.` : "";
   return chatJson<Correction>(
     [
       {
@@ -61,7 +65,7 @@ Output rules — keep it short:
 - grammar_point: 2–6 words, e.g. "i-adjective past tense", "ni vs de for location".
 - explanation: ONE sentence, max 20 words, simple English. It must agree with your fix.
 - natural: only if a native would say it quite differently; otherwise "".
-- If correct: is_correct=true, mistakes=[].`,
+- If correct: is_correct=true, mistakes=[].${reuse}`,
       },
       { role: "user", content: `${recent ? `Conversation so far:\n${recent}\n\n` : ""}Check this sentence:\n${sentence}` },
     ],

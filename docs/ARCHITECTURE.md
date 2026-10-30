@@ -32,7 +32,7 @@ neko is a Japanese-learning tamagotchi. The pet lives in a web app on the box, a
 | Grammar correction | llama.cpp Qwen3.6, JSON output | Separate call from the chat reply. Frontier model is a possible later upgrade. |
 | Grammar Q&A | Hermes Agent API server | Reads vault mistakes; writes grammar notes (llm-wiki). |
 | Pet state | SQLite | |
-| Learning records | `~/vault/Japanese/` | neko writes records; Hermes writes summaries only. |
+| Learning records | `~/vault/Japanese/` | neko renders `Index.md`, `Daily/`, `Grammar/` from SQLite (overwritten); Hermes and the learner write in `Notes/`. |
 | Level | Config `level: N4` (N5–N1) | Limits vocab/grammar in prompts, furigana above level, explanation depth. |
 
 ## Speech-to-text: no auto-correction
@@ -91,7 +91,7 @@ Decide this before Phase 5.
 
 1. **Speech loop in the browser** — mic → STT bake-off → correction → VOICEVOX → playback. Measure latency and memory.
 2. **Pet engine + PixiJS pet + WebSocket protocol**, browser as the first client. *(In progress: protocol in `shared/protocol.ts`; pet drawn from pixel-art GIFs (`web/public/pet/<anim>.gif`, anchored at the feet automatically; drowsy hour around bedtime with yawns, sick when starving, grumpy if petted awake at night); stats in SQLite — practising feeds the pet, petting cheers it up, it sleeps 23:00–07:00 in `NEKO_TZ`.)*
-3. **Vault learning records + Hermes grammar Q&A.**
+3. **Vault learning records + Hermes grammar Q&A.** *(In progress: records in SQLite rendered to `~/vault/Japanese/` (Index, Daily/, Grammar/); listening misses = repeat / slow / opened the English; grammar questions via the Hermes API server (`/v1/chat/completions`, Hermes reads the notes itself) with a llama.cpp fallback. Protocol: `ask` → `answer`, `reveal`.)*
 4. **ESP32-S3 firmware** — WebSocket client, audio via ES8311/ES7210, sprite rendering, touch and IMU.
 5. **Away-from-home access** — see open issue above.
 

@@ -16,6 +16,11 @@
  *   ← say {ja, en, mood} → audio_start → [binary voice frames] → audio_end
  *   ← correction {...}                  (usually arrives a little after the pet starts talking)
  *   ← state {...}                       (stats updated: practising feeds the pet)
+ *
+ * Grammar question (answered by Hermes from the learner's vault record, or by the local model):
+ *   ask {text}  →  ← state {anim:"think"}  →  ← answer {question, text, source}
+ *
+ * Every turn, correction, listening miss (repeat / reveal) and question is written to the vault.
  */
 
 // ── client → server ──────────────────────────────────────────────────────────
@@ -56,7 +61,19 @@ export interface Repeat {
   slow?: boolean;
 }
 
-export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat;
+/** The learner looked at the English of a pet line (recorded as a listening miss). */
+export interface Reveal {
+  type: "reveal";
+  sayId: string;
+}
+
+/** A grammar question, in English or Japanese. */
+export interface Ask {
+  type: "ask";
+  text: string;
+}
+
+export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | Ask;
 
 // ── server → client ──────────────────────────────────────────────────────────
 
@@ -125,9 +142,17 @@ export interface CorrectionMsg {
   natural: string;
 }
 
+export interface AnswerMsg {
+  type: "answer";
+  question: string;
+  text: string; // plain text with light markdown (**bold**, "- " lists)
+  source: "hermes" | "local"; // local = Hermes unavailable, answered by the pet's own model
+  ms: number;
+}
+
 export interface ErrorMsg {
   type: "error";
   message: string;
 }
 
-export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | ErrorMsg;
+export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | AnswerMsg | ErrorMsg;

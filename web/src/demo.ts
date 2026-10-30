@@ -1,7 +1,7 @@
 import type { ServerMessage } from "../../shared/protocol.ts";
 
 /** Sample messages for /?demo, so the screen can be seen without the neko server. Not real data. */
-export function run(onMessage: (m: ServerMessage) => void, wake: () => void, userSays: (text: string) => void) {
+export function run(onMessage: (m: ServerMessage) => void, wake: () => void, userSays: (text: string) => void, ask: (text: string) => void) {
   const stats = { name: "ねこ", hunger: 58, happiness: 64, streak: 6, practicedToday: 3, level: "N5" };
   wake();
   onMessage({ type: "state", anim: "idle", mood: "happy", stats });
@@ -33,4 +33,12 @@ export function run(onMessage: (m: ServerMessage) => void, wake: () => void, use
     ],
   });
   onMessage({ type: "state", anim: "happy", mood: "happy", stats: { ...stats, hunger: 43, practicedToday: 4, happiness: 69 } });
+  ask("When do I drop は after time words like 明日?");
+  onMessage({
+    type: "answer",
+    question: "When do I drop は after time words like 明日?",
+    text: "Use **は** after a time word only when you contrast it with another time.\n- 明日行きたいです。 (I want to go tomorrow.)\n- 明日は行きたいです。 (Tomorrow, at least, I want to go.)\nYou added は after 明日 twice this week, both times for a plain plan.",
+    source: "hermes",
+    ms: 8400,
+  });
 }

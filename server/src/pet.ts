@@ -1,8 +1,6 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { Anim, Mood, PetStats } from "../../shared/protocol.ts";
 import { config } from "./config.ts";
+import { db } from "./db.ts";
 
 /**
  * The pet's persistent state. Stats change with time (computed lazily from timestamps):
@@ -17,8 +15,6 @@ const JOY_PER_PET = 3;
 const PET_COOLDOWN_MS = 10_000;
 const BEDTIME = { from: 23, to: 7 }; // local hours
 
-mkdirSync(config.dataDir, { recursive: true });
-const db = new DatabaseSync(path.join(config.dataDir, "neko.db"));
 db.exec(`
   CREATE TABLE IF NOT EXISTS pet (
     id INTEGER PRIMARY KEY CHECK (id = 1),
