@@ -1,3 +1,5 @@
 node_modules/
 .env
 vault/
+data/
+log.txt

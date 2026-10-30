@@ -24,17 +24,20 @@ Binaries live in `~/apps/`, speech models in `~/models/stt/`.
 
 ### Starting the speech-to-text server
 
-ReazonSpeech (Zipformer transducer):
+ReazonSpeech (Zipformer transducer, int8) — the model neko uses:
 
 ```bash
 SHERPA=~/apps/sherpa-onnx-v2.0.1-linux-x64-shared
 M=~/models/stt/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01
 LD_LIBRARY_PATH=$SHERPA/lib $SHERPA/bin/sherpa-onnx-offline-websocket-server \
-  --port=6006 --num-threads=4 \
-  --tokens=$M/tokens.txt --encoder=$M/encoder-*.onnx --decoder=$M/decoder-*.onnx --joiner=$M/joiner-*.onnx
+  --port=6006 --num-threads=4 --num-work-threads=2 --max-batch-size=2 --model-type=transducer \
+  --tokens=$M/tokens.txt \
+  --encoder=$M/encoder-epoch-99-avg-1.int8.onnx \
+  --decoder=$M/decoder-epoch-99-avg-1.int8.onnx \
+  --joiner=$M/joiner-epoch-99-avg-1.int8.onnx
 ```
 
-SenseVoice:
+SenseVoice (bake-off comparison only):
 
 ```bash
 M=~/models/stt/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
@@ -43,12 +46,10 @@ LD_LIBRARY_PATH=$SHERPA/lib $SHERPA/bin/sherpa-onnx-offline-websocket-server \
   --tokens=$M/tokens.txt --sense-voice-model=$M/model.int8.onnx --sense-voice-language=ja
 ```
 
-(Exact model file names are confirmed once the downloads finish; these will move into systemd units.)
-
 ### Starting VOICEVOX
 
 ```bash
-~/apps/voicevox/<extracted engine>/run --host 127.0.0.1 --port 50021
+~/apps/voicevox/engine/run --host 127.0.0.1 --port 50021 --cpu_num_threads 4
 ```
 
 Voice credit: `VOICEVOX:<character name>` for whichever voice the pet uses.
@@ -84,19 +85,26 @@ ssh -L 8081:localhost:8081 <box>
 | Endpoint | |
 |---|---|
 | `POST /api/stt` | Raw 16-bit mono PCM (`x-sample-rate`, default 16000) → `{text, ms}` |
-| `POST /api/respond` | `{text, history}` → `{correction, reply, timings}` |
+| `POST /api/reply` | `{text, history}` → pet reply `{ja, en, mood, ms}` |
+| `POST /api/correct` | `{text, history}` → correction card `{is_correct, corrected, mistakes, natural, ms}` |
 | `POST /api/tts` | `{text, slow}` → WAV in the pet's voice |
 | `GET /api/voices` | VOICEVOX voices |
+| `GET /api/voice-test` | The voice-test sentences (Japanese, romaji, intended mistake) |
+| `POST /api/voice-test/:n` | Raw PCM of you reading sentence `n` → `{transcript, verdict, ms}`; recording saved to `server/data/voice-tests/` |
 | `GET /api/health` | Status of llama.cpp, STT and VOICEVOX |
 
 ## STT bake-off
+
+Result (2026-10-30, synthetic VOICEVOX speech with 0.3 s padding): **ReazonSpeech kept 12/12** sentences exactly, ~40 ms each; SenseVoice 11/12 with two small mishearings, ~60 ms. Neither model auto-corrected any grammar. ReazonSpeech is the default.
 
 Checks whether each speech-to-text model keeps deliberate grammar mistakes (VOICEVOX speaks 10 N4-level wrong sentences + 2 correct controls):
 
 ```bash
 cd server
-npm run bakeoff -- reazonspeech=ws://127.0.0.1:6006 sensevoice=ws://127.0.0.1:6007
+npm run bakeoff -- reazonspeech=ws://127.0.0.1:6006 sensevoice=ws://127.0.0.1:6007   # add --ja to print Japanese transcripts
 ```
+
+To test with **your own voice**, open the **Voice test** tab in the web page: it walks through the same sentences (with romaji and the mistake to make), scores each recording, and saves it in `server/data/voice-tests/` for re-testing later.
 
 ## Layout
 

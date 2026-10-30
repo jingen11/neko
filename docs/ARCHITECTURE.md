@@ -45,7 +45,7 @@ Whisper (and Whisper-derived models like kotoba-whisper) has a large text decode
 
 Both candidates run on sherpa-onnx's prebuilt native binaries: `sherpa-onnx-offline` (CLI) for the bake-off, and `sherpa-onnx-offline-websocket-server` as the long-running service. If the bake-off shows both lose too many mistakes, the fallbacks are SenseVoice.cpp (native ggml port, Vulkan-capable) or the larger official ReazonSpeech NeMo model (Python).
 
-No model is perfectly verbatim: mumbled particles (は/が/を) are acoustically ambiguous. So the UI always shows the transcript and lets you confirm or edit it before correction. Phase 1 is a bake-off: record sentences with deliberate mistakes and see which model preserves them.
+No model is perfectly verbatim: mumbled particles (は/が/を) are acoustically ambiguous. So the UI always shows the transcript and lets you confirm or edit it before correction. **Bake-off result (2026-10-30):** VOICEVOX spoke 10 N4 sentences with deliberate mistakes + 2 correct controls. With 0.3 s of silence padding, **ReazonSpeech k2 v2 (int8) kept 12/12 exactly** (~40 ms per sentence, ~400 MB RAM); SenseVoice kept 11/12 with two small mishearings (~60 ms). Neither model auto-corrected grammar. Without padding ReazonSpeech dropped the first word of clips that start instantly, so neko pads all push-to-talk audio. **ReazonSpeech is the chosen model.** Confirmed with the user's own voice (2026-10-30): 12/12 kept in the Voice test tab.
 
 ## Text-to-speech: correct pronunciation
 
