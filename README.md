@@ -6,9 +6,10 @@ Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Status
 
-**Phase 1 — speech loop (in progress).** Browser test page: hold to talk → speech-to-text → grammar correction + pet reply → pet speaks. Plus a bake-off to pick the speech-to-text model that keeps learner mistakes instead of auto-correcting them.
+- **Phase 1 — speech loop: done.** Speech-to-text (ReazonSpeech) keeps learner mistakes (12/12 with a real voice); correction + pet reply via Qwen3.6; VOICEVOX voice. Test page at `/lab.html`.
+- **Phase 2 — the pet: in progress.** PixiJS cat at `/`, WebSocket protocol (`shared/protocol.ts`) that the ESP32 board will also use, pet stats (hunger, happiness, streak) in SQLite.
 
-Later phases: PixiJS pet and WebSocket protocol, vault learning records + Hermes grammar Q&A, ESP32-S3 firmware, away-from-home access.
+Later phases: vault learning records + Hermes grammar Q&A, ESP32-S3 firmware, away-from-home access.
 
 ## Services
 
@@ -67,11 +68,14 @@ Voice credit: `VOICEVOX:<character name>` for whichever voice the pet uses.
 ## Running neko
 
 ```bash
-cd server
-cp .env.example .env     # set VOICEVOX_SPEAKER, NEKO_LEVEL, service URLs
+cd web && npm install && npm run build      # builds the pet app into web/dist (served by neko)
+cd ../server
+cp .env.example .env     # set NEKO_TZ, VOICEVOX_SPEAKER, NEKO_LEVEL, ...
 npm install
-npm start                # http://127.0.0.1:8081
+npm start                # http://127.0.0.1:8081  (pet at /, lab page at /lab.html)
 ```
+
+After changing web code, run `npm run build` in `web/` again. For live reload while developing the pet, run `npm run dev` in `web/` (Vite on :5173, forwarding `/api` and `/ws` to the neko server).
 
 The microphone only works on a secure origin, so open the page as `http://localhost:8081`. If the box is remote, tunnel it first:
 
@@ -89,8 +93,14 @@ ssh -L 8081:localhost:8081 <box>
 | `VOICEVOX_URL` | `http://127.0.0.1:50021` | |
 | `VOICEVOX_SPEAKER` | `3` | style id; list with `GET /api/voices` |
 | `NEKO_LEVEL` | `N4` | JLPT level the pet speaks at (N5–N1) |
+| `NEKO_PET_NAME` | `ねこ` | The pet's name |
+| `NEKO_TZ` | box time zone | Your time zone (e.g. `Asia/Tokyo`): the pet sleeps 23:00–07:00 local time, and "today" for the streak |
 
-### API
+### Pet protocol
+
+The pet app and the ESP32 board talk to neko over one WebSocket at `/ws`: JSON messages plus binary 16-bit PCM audio. All message types and the turn flow are documented in [`shared/protocol.ts`](shared/protocol.ts).
+
+### HTTP API (lab page and tools)
 
 | Endpoint | |
 |---|---|
@@ -120,8 +130,13 @@ To test with **your own voice**, open the **Voice test** tab in the web page: it
 
 ```
 docs/ARCHITECTURE.md   design and decisions
-server/                Fastify server, clients for llama.cpp / sherpa-onnx / VOICEVOX
-  src/                 config, stt, tts, llm, tutor (correction + pet reply), index (routes)
-  public/              Phase 1 browser test page
+shared/protocol.ts     WebSocket protocol (server, web app, and later the board)
+server/                Fastify server
+  src/                 hub (pet protocol), pet (stats, SQLite), tutor (correction + reply),
+                       stt, tts, llm, audio, voicetest, index (routes)
+  public/lab.html      Phase 1 test page (speech loop + voice test)
   scripts/             STT bake-off
+  data/                pet database + voice-test recordings (not in git)
+web/                   PixiJS pet app (Vite); build output in web/dist
+deploy/systemd/        service units
 ```

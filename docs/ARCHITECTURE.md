@@ -90,7 +90,7 @@ Decide this before Phase 5.
 ## Build order (riskiest first)
 
 1. **Speech loop in the browser** — mic → STT bake-off → correction → VOICEVOX → playback. Measure latency and memory.
-2. **Pet engine + PixiJS pet + WebSocket protocol**, browser as the first client.
+2. **Pet engine + PixiJS pet + WebSocket protocol**, browser as the first client. *(In progress: protocol in `shared/protocol.ts`; pet drawn in code until there is sprite art; stats in SQLite — practising feeds the pet, petting cheers it up, it sleeps 23:00–07:00 in `NEKO_TZ`.)*
 3. **Vault learning records + Hermes grammar Q&A.**
 4. **ESP32-S3 firmware** — WebSocket client, audio via ES8311/ES7210, sprite rendering, touch and IMU.
 5. **Away-from-home access** — see open issue above.

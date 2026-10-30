@@ -1,25 +1,29 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import fastifyStatic from "@fastify/static";
+import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
+import { padSilence } from "./audio.ts";
 import { config } from "./config.ts";
+import { attach } from "./hub.ts";
 import type { ChatMessage } from "./llm.ts";
 import { int16ToFloat32, transcribe } from "./stt.ts";
 import { listVoices, speak } from "./tts.ts";
 import { correct, petReply } from "./tutor.ts";
 import { saveRecording, score, testCases } from "./voicetest.ts";
 
-/** Push-to-talk audio can start right on the first word, which the model then misses; pad with 0.3 s of silence. */
-function padSilence(speech: Float32Array, rate: number): Float32Array {
-  const pad = Math.round(rate * 0.3);
-  const out = new Float32Array(speech.length + 2 * pad);
-  out.set(speech, pad);
-  return out;
-}
-
-const app = Fastify({ logger: { level: process.env.NEKO_LOG_LEVEL ?? "info" }, bodyLimit: 20 * 1024 * 1024 });
+const app = Fastify({ logger: { level: process.env.NEKO_LOG_LEVEL ?? "info" }, disableRequestLogging: true, bodyLimit: 20 * 1024 * 1024 });
 
 app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
-app.register(fastifyStatic, { root: path.resolve(import.meta.dirname, "../public") });
+
+// The pet app (built from web/) at "/", the Phase 1 lab page at "/lab.html".
+const webDist = path.resolve(import.meta.dirname, "../../web/dist");
+if (!existsSync(webDist)) app.log.warn(`web app not built (${webDist} missing): run "npm run build" in web/`);
+app.register(fastifyStatic, { root: [webDist, path.resolve(import.meta.dirname, "../public")].filter(existsSync) });
+
+// The pet protocol (see shared/protocol.ts).
+await app.register(fastifyWebsocket, { options: { maxPayload: 4 * 1024 * 1024 } });
+app.get("/ws", { websocket: true }, (socket) => attach(socket, app.log));
 
 /** Speech → text. Body: raw 16-bit mono PCM; sample rate in `x-sample-rate` (default 16000). */
 app.post("/api/stt", async (req, reply) => {

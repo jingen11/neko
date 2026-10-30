@@ -1,0 +1,67 @@
+:root {
+  --bg: #faf7f2; --panel: #ffffff; --ink: #2b2622; --muted: #8a8079; --line: #e8e1d8;
+  --accent: #e0793c; --accent-ink: #fff; --ok: #3f8f5a; --bad: #c0453a; --warn: #b7862a;
+  --stage: #f3ece2; --bar: #ece4da;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1c1a18; --panel: #262320; --ink: #eee7df; --muted: #9c938b; --line: #3a3530;
+    --accent: #f08a4b; --accent-ink: #1c1a18; --ok: #6cc08a; --bad: #ec7b70; --warn: #e0b45c;
+    --stage: #2a2622; --bar: #3a3530;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1c1a18; --panel: #262320; --ink: #eee7df; --muted: #9c938b; --line: #3a3530;
+  --accent: #f08a4b; --accent-ink: #1c1a18; --ok: #6cc08a; --bad: #ec7b70; --warn: #e0b45c;
+  --stage: #2a2622; --bar: #3a3530;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+#app { max-width: 640px; margin: 0 auto; padding: 12px 16px 32px; }
+.hidden { display: none !important; }
+
+header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.name { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); display: inline-block; }
+.dot.on { background: var(--ok); } .dot.off { background: var(--bad); }
+.stats { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.stat { display: flex; align-items: center; gap: 4px; }
+.bar { width: 56px; height: 8px; border-radius: 4px; background: var(--bar); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 50%; background: var(--accent); transition: width .6s; }
+#joyBar { background: #e36f8c; }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; }
+
+#stage { height: min(46vh, 380px); min-height: 240px; margin: 10px 0; border-radius: 18px; background: var(--stage); overflow: hidden; touch-action: none; }
+#stage canvas { display: block; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+.ja { font-size: 21px; }
+.en { color: var(--muted); font-size: 14px; }
+.en.blur { filter: blur(5px); cursor: pointer; user-select: none; }
+.row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 10px; padding: 6px 12px; cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+textarea { width: 100%; font: inherit; font-size: 18px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); resize: none; }
+.talk { flex: 1; background: var(--accent); color: var(--accent-ink); border: none; padding: 12px; font-size: 17px; font-weight: 600; touch-action: none; }
+.talk.rec { background: var(--bad); }
+.hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+.fix { margin-top: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); font-size: 14px; }
+.fix.good { border-color: var(--ok); } .fix.bad { border-color: var(--bad); } .fix.wait { color: var(--muted); }
+.fix .corrected { font-size: 18px; }
+.fix ul { margin: 6px 0 0 18px; padding: 0; }
+.fix del { color: var(--bad); } .fix ins { color: var(--ok); text-decoration: none; font-weight: 600; }
+
+details { margin-top: 6px; }
+summary { cursor: pointer; color: var(--muted); }
+#log { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.entry { padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); }
+.entry.me { align-self: flex-end; max-width: 90%; }
+.entry.pet { align-self: flex-start; max-width: 90%; }
+.foot { text-align: center; font-size: 12px; color: var(--muted); margin-top: 18px; }
+.foot a { color: inherit; }
+
+#wake { position: fixed; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(4px); }
+#wakeBtn { font-size: 22px; padding: 18px 26px; border-radius: 16px; background: var(--accent); color: var(--accent-ink); border: none; }
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 14px; max-width: calc(100% - 32px); }

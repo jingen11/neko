@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>neko</title>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="name"><span id="petName">ねこ</span> <span id="conn" class="dot" title="connecting…"></span></div>
+    <div class="stats">
+      <div class="stat" title="Fullness — practising feeds me"><span>🍙</span><div class="bar"><i id="fullBar"></i></div></div>
+      <div class="stat" title="Happiness — practise and pet me"><span>💗</span><div class="bar"><i id="joyBar"></i></div></div>
+      <div class="chip" title="Days in a row you practised">🔥 <b id="streak">0</b></div>
+      <div class="chip" title="Sentences today">✏️ <b id="today">0</b></div>
+    </div>
+  </header>
+
+  <div id="stage"></div>
+
+  <section id="bubble" class="card hidden">
+    <div id="sayJa" class="ja"></div>
+    <div id="sayEn" class="en blur" title="Tap to show the translation"></div>
+    <div class="row">
+      <button id="again">🔊 Again</button>
+      <button id="slow">🐢 Slow</button>
+    </div>
+  </section>
+
+  <section id="turn" class="card">
+    <textarea id="text" rows="2" placeholder="Hold the mic and speak Japanese — or type here"></textarea>
+    <div class="row">
+      <button id="talk" class="talk">🎤 Hold to talk</button>
+      <button id="send">Send</button>
+    </div>
+    <div class="hint">Hold <b>Space</b> to talk · check the transcript, then <b>Enter</b> · stroke the cat to pet it</div>
+    <div id="correction"></div>
+  </section>
+
+  <details id="logWrap">
+    <summary>Conversation</summary>
+    <div id="log"></div>
+  </details>
+  <p class="foot"><a href="/lab.html">lab page</a> · voice: VOICEVOX</p>
+</div>
+
+<div id="wake"><button id="wakeBtn">🐱 Tap to wake <span id="wakeName">ねこ</span></button></div>
+<div id="toast" class="hidden"></div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
