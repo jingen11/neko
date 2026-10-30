@@ -1,25 +1,27 @@
 # neko 🐱
 
-A Japanese-learning tamagotchi. The pet lives in a web app on the box and will travel with you on an ESP32-S3 board. It talks to you in Japanese at your JLPT level, corrects your grammar when you speak, and (later) records your mistakes in an Obsidian vault so Hermes Agent can coach you.
+A Japanese-learning tamagotchi. The pet lives in a web app on the box and will travel with you on an ESP32-S3 board. It talks to you in Japanese at your JLPT level, corrects your grammar when you speak, and records your practice and mistakes in an Obsidian vault so Hermes Agent can answer your grammar questions with real context.
 
 Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Status
 
 - **Phase 1 — speech loop: done.** Speech-to-text (ReazonSpeech) keeps learner mistakes (12/12 with a real voice); correction + pet reply via Qwen3.6; VOICEVOX voice. Test page at `/lab.html`.
-- **Phase 2 — the pet: in progress.** PixiJS cat at `/` (sample screen at `/?demo`, animation switch at `/?debug`), WebSocket protocol (`shared/protocol.ts`) that the ESP32 board will also use, pet stats (hunger, happiness, streak) in SQLite.
+- **Phase 2 — the pet: done.** PixiJS cat at `/` (sample screen at `/?demo`, animation switch at `/?debug`), WebSocket protocol (`shared/protocol.ts`) that the ESP32 board will also use, pet stats (hunger, happiness, streak) in SQLite.
+- **Phase 3 — learning records + grammar Q&A: in progress.** Every sentence, correction, listening miss and question is written to `~/vault/Japanese/` (see [Learning records](#learning-records)). **Ask grammar** in the composer (or **Ask about this** on a review card) sends a question to Hermes, which reads those notes; if Hermes is down, the pet's own model answers.
 
-Later phases: vault learning records + Hermes grammar Q&A, ESP32-S3 firmware, away-from-home access.
+Later phases: ESP32-S3 firmware, away-from-home access.
 
 ## Services
 
-neko is a Fastify server that calls three local services:
+neko is a Fastify server that calls these local services:
 
 | Service | Default URL | What for |
 |---|---|---|
 | llama.cpp (Qwen3.6) | `http://127.0.0.1:8080` | Grammar correction and pet replies (thinking off, JSON output) |
 | sherpa-onnx offline WebSocket server | `ws://127.0.0.1:6006` | Japanese speech-to-text (ReazonSpeech or SenseVoice) |
 | VOICEVOX engine | `http://127.0.0.1:50021` | The pet's voice |
+| Hermes Agent API server | `http://127.0.0.1:8642` | Grammar questions, answered from the vault (optional: falls back to llama.cpp) |
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
 
@@ -32,6 +34,17 @@ sudo ./deploy/install-services.sh
 ```
 
 Then manage them with `systemctl status|restart neko neko-stt neko-voicevox` and read logs with `journalctl -u neko -f`. The manual commands below are for debugging or the bake-off.
+
+### Hermes API server (grammar questions)
+
+Hermes's OpenAI-compatible API is turned on in `~/.hermes/.env` (`API_SERVER_ENABLED=true`, `API_SERVER_KEY=...`); neko sends the same key as `HERMES_KEY` in `server/.env`. Run the Hermes gateway as a boot-time service:
+
+```bash
+sudo hermes gateway install --system --run-as-user jedev --start-now
+curl http://127.0.0.1:8642/health      # {"status": "ok", ...}
+```
+
+A question takes Hermes about a minute on the local model (it opens the vault notes first). While Hermes is down, answers come from llama.cpp in ~10 s, marked in the app as "the pet's own model".
 
 ### Starting the speech-to-text server
 
@@ -95,6 +108,23 @@ ssh -L 8081:localhost:8081 <box>
 | `NEKO_LEVEL` | `N4` | JLPT level the pet speaks at (N5–N1) |
 | `NEKO_PET_NAME` | `ねこ` | The pet's name |
 | `NEKO_TZ` | box time zone | Your time zone (e.g. `Asia/Tokyo`): the pet sleeps 23:00–07:00 local time, and "today" for the streak |
+| `NEKO_VAULT_DIR` | `~/vault/Japanese` | Where learning records are written; empty turns it off |
+| `HERMES_URL` | `http://127.0.0.1:8642` | Hermes API server |
+| `HERMES_KEY` | (none) | Same as `API_SERVER_KEY` in `~/.hermes/.env`; without it, questions go straight to llama.cpp |
+| `NEKO_DATA_DIR` | `server/data` | SQLite database folder (point it elsewhere for tests) |
+
+## Learning records
+
+neko keeps every practice turn, mistake, listening miss (asked to repeat, asked to slow down, opened the English) and grammar question in SQLite, and renders Obsidian notes from it into `~/vault/Japanese/`:
+
+```
+Index.md                 totals, weakest grammar points (last 30 days), recent days
+Daily/<date>.md          each sentence with its fix and the pet's reply; listening misses; questions and answers
+Grammar/<point>.md       every mistake on one grammar point, newest first
+Notes/                   free for you and Hermes; neko never writes here
+```
+
+neko owns `Index.md`, `Daily/` and `Grammar/`: they are rewritten after each turn and rebuilt from the database on every start, so edits there are lost. The correction model is shown the grammar point names already on record and reuses them, so repeat mistakes collect in one note.
 
 ### Pet protocol
 
@@ -111,7 +141,7 @@ The pet app and the ESP32 board talk to neko over one WebSocket at `/ws`: JSON m
 | `GET /api/voices` | VOICEVOX voices |
 | `GET /api/voice-test` | The voice-test sentences (Japanese, romaji, intended mistake) |
 | `POST /api/voice-test/:n` | Raw PCM of you reading sentence `n` → `{transcript, verdict, ms}`; recording saved to `server/data/voice-tests/` |
-| `GET /api/health` | Status of llama.cpp, STT and VOICEVOX |
+| `GET /api/health` | Status of llama.cpp, STT, VOICEVOX and Hermes |
 
 ## STT bake-off
 
@@ -132,11 +162,12 @@ To test with **your own voice**, open the **Voice test** tab in the web page: it
 docs/ARCHITECTURE.md   design and decisions
 shared/protocol.ts     WebSocket protocol (server, web app, and later the board)
 server/                Fastify server
-  src/                 hub (pet protocol), pet (stats, SQLite), tutor (correction + reply),
+  src/                 hub (pet protocol), pet (stats), records (learning records + vault notes),
+                       ask (grammar questions via Hermes), tutor (correction + reply), db,
                        stt, tts, llm, audio, voicetest, index (routes)
   public/lab.html      Phase 1 test page (speech loop + voice test)
   scripts/             STT bake-off
-  data/                pet database + voice-test recordings (not in git)
+  data/                SQLite database (pet + records) and voice-test recordings (not in git)
 web/                   PixiJS pet app (Vite); build output in web/dist
 deploy/systemd/        service units
 ```

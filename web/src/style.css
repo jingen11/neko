@@ -148,6 +148,16 @@ h1 { font: 500 var(--fs-title)/1.15 var(--serif); letter-spacing: -0.01em; }
 .check .why, .check .natural { color: var(--muted); }
 .check .natural { margin-top: 6px; }
 .check .natural span { color: var(--text); }
+/* grammar questions: your question on the right, the answer as a card on the left */
+.msg.me.q .label, .msg.answer .label { font-size: var(--fs-small); font-weight: 600; color: var(--accent); }
+.msg.me.q .text { margin-top: 2px; font-size: 16px; line-height: 24px; }
+.msg.answer { align-self: stretch; max-width: none; border-left: 3px solid var(--accent); border-radius: 6px 16px 16px 6px; }
+.msg.answer .body { margin-top: 6px; font-size: var(--fs-body); line-height: 22px; display: grid; gap: 6px; }
+.msg.answer .body ul { padding-left: 18px; list-style: disc; display: grid; gap: 2px; }
+.msg.answer .body code { font: inherit; background: var(--pill-neutral-bg); padding: 0 4px; border-radius: 4px; }
+.msg.answer.wait .body { color: var(--muted); }
+.msg.answer .src { margin-top: 8px; font-size: var(--fs-small); color: var(--muted); }
+.review-list .ask-about { margin-top: 8px; }
 del { color: var(--negative); }
 ins { color: var(--positive); text-decoration: none; font-weight: 600; }
 
@@ -167,6 +177,8 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
 .btn.primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
 .btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 85%, var(--ground)); }
 .btn.primary:disabled { background: var(--track); border-color: var(--track); color: var(--muted); }
+.btn.ask-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-primary); }
+.composer.asking textarea { border-color: var(--accent); font-size: 16px; }
 .talk { min-width: 168px; touch-action: none; user-select: none; -webkit-user-select: none; }
 .talk.rec::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--negative); }
 
@@ -209,7 +221,7 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
   .stage-panel { height: 300px; padding: 12px; }
   .keys { display: none; }
   .composer .talk { flex: 1; height: 48px; }
-  .composer #send { height: 48px; }
+  .composer #send, .composer #askBtn { height: 48px; }
   .review-list { grid-template-columns: minmax(0, 1fr); }
 }
 

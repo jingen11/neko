@@ -31,3 +31,21 @@ export async function chatJson<T>(messages: ChatMessage[], schema: object, opts:
     throw new Error(`llama.cpp returned invalid JSON: ${content.slice(0, 200)}`);
   }
 }
+
+/** Call llama.cpp for plain text (markdown allowed), thinking off. */
+export async function chatText(messages: ChatMessage[], opts: { temperature?: number; maxTokens?: number } = {}): Promise<{ text: string; ms: number }> {
+  const t0 = performance.now();
+  const res = await fetch(`${config.llamaUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      messages,
+      temperature: opts.temperature ?? 0.3,
+      max_tokens: opts.maxTokens ?? 700,
+      chat_template_kwargs: { enable_thinking: false },
+    }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`llama.cpp error ${res.status}: ${body?.error?.message ?? JSON.stringify(body)}`);
+  return { text: String(body.choices?.[0]?.message?.content ?? "").trim(), ms: Math.round(performance.now() - t0) };
+}

@@ -3,10 +3,12 @@ import path from "node:path";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
+import { hermesHealth } from "./ask.ts";
 import { padSilence } from "./audio.ts";
 import { config } from "./config.ts";
 import { attach } from "./hub.ts";
 import type { ChatMessage } from "./llm.ts";
+import { rebuildVault } from "./records.ts";
 import { int16ToFloat32, transcribe } from "./stt.ts";
 import { listVoices, speak } from "./tts.ts";
 import { correct, petReply } from "./tutor.ts";
@@ -107,8 +109,16 @@ app.get("/api/health", async () => {
       if (!r.ok) throw new Error(`status ${r.status}`);
     }),
     check("stt", () => transcribe(new Float32Array(1600), 16000)),
+    check("hermes", hermesHealth),
   ]);
   return { level: config.level, ...Object.fromEntries(results) };
 });
 
 await app.listen({ host: config.host, port: config.port });
+
+// Notes are rendered from the database, so rebuilding brings the vault up to date after code changes.
+if (config.vaultDir)
+  rebuildVault().then(
+    () => app.log.info(`vault notes written to ${config.vaultDir}`),
+    (err) => app.log.warn(`vault rebuild failed: ${(err as Error).message}`),
+  );

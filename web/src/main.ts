@@ -1,5 +1,5 @@
 import { Application } from "pixi.js";
-import type { Anim, CorrectionMsg, Mood, PetStats, ServerMessage } from "../../shared/protocol.ts";
+import type { AnswerMsg, Anim, CorrectionMsg, Mood, PetStats, ServerMessage } from "../../shared/protocol.ts";
 import { AudioIO } from "./audio.ts";
 import { Net } from "./net.ts";
 import { Pet } from "./pet.ts";
@@ -9,6 +9,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const textEl = $<HTMLTextAreaElement>("text");
 const talkBtn = $<HTMLButtonElement>("talk");
 const sendBtn = $<HTMLButtonElement>("send");
+const askBtn = $<HTMLButtonElement>("askBtn");
 const chat = $("chat");
 
 // Mirrors server/src/pet.ts: one practised sentence takes FEED_PER_TURN off hunger; below SAD_BELOW happiness it's sad.
@@ -25,6 +26,8 @@ let thinking = false;
 let mood: Mood = "sleepy";
 let anim: Anim = "sleep";
 let lastUserEntry: HTMLElement | null = null;
+let askMode = false; // the composer sends a grammar question instead of a practice sentence
+let pendingAnswer: HTMLElement | null = null; // the answer card waiting for Hermes
 const grammar = new Map<string, { n: number; original: string; fix: string }>();
 
 // ── the cat: PixiJS starts at once so the sleeping cat shows before waking ──
@@ -107,7 +110,7 @@ function setAwake() {
   awake = true;
   $("wakeBtn").hidden = true;
   $("petBtn").hidden = false;
-  for (const el of [talkBtn, sendBtn, textEl]) el.disabled = false;
+  for (const el of [talkBtn, sendBtn, askBtn, textEl]) el.disabled = false;
   $("chatEmpty").textContent = "Listening for the first line…";
 }
 
@@ -137,7 +140,7 @@ function onMessage(m: ServerMessage) {
       $("catState").textContent = caption(m.anim, m.mood);
       break;
     case "say":
-      petEntry(m.ja, m.en);
+      petEntry(m.id, m.ja, m.en);
       break;
     case "audio_start":
       audio.voiceStart(m.rate);
@@ -156,7 +159,14 @@ function onMessage(m: ServerMessage) {
       sendBtn.disabled = false;
       showCorrection(m);
       break;
+    case "answer":
+      showAnswer(m);
+      break;
     case "error":
+      if (pendingAnswer?.classList.contains("wait") && m.message.startsWith("Couldn't answer")) {
+        pendingAnswer.remove();
+        pendingAnswer = null;
+      }
       lastUserEntry?.querySelector(".check.wait")?.remove();
       thinking = false;
       sendBtn.disabled = false;
@@ -217,9 +227,57 @@ document.addEventListener("keyup", (e) => {
   }
 });
 
+// ── ask mode: the composer sends a grammar question (answered by Hermes from your vault) ──
+function setAskMode(on: boolean) {
+  askMode = on;
+  askBtn.setAttribute("aria-pressed", String(on));
+  textEl.closest(".composer")!.classList.toggle("asking", on);
+  textEl.placeholder = on ? "Ask about grammar, in English or Japanese… e.g. when do I use に vs で?" : "話してみて… or type here";
+  textEl.lang = on ? "" : "ja";
+  $("text").previousElementSibling!.textContent = on ? "Your grammar question" : "Your reply in Japanese";
+  sendBtn.textContent = on ? "Ask" : "Send";
+  sendBtn.disabled = on ? !!pendingAnswer : thinking;
+}
+askBtn.addEventListener("click", () => {
+  setAskMode(!askMode);
+  textEl.focus();
+});
+
+function ask(text: string) {
+  if (pendingAnswer) return toast("Still looking into your last question.");
+  net.send({ type: "ask", text });
+  $("chatEmpty").hidden = true;
+  const q = document.createElement("div");
+  q.className = "msg me q";
+  q.innerHTML = `<p class="label">Grammar question</p><p class="text">${esc(text)}</p>`;
+  const a = document.createElement("div");
+  a.className = "msg answer wait";
+  a.innerHTML = `<p class="label">Answer</p><div class="body"><p>Looking through your notes…</p></div>`;
+  chat.append(q, a);
+  pendingAnswer = a;
+  scrollChat();
+}
+
+function showAnswer(m: AnswerMsg) {
+  const a = pendingAnswer ?? chat.appendChild(Object.assign(document.createElement("div"), { className: "msg answer" }));
+  pendingAnswer = null;
+  a.classList.remove("wait");
+  const from = m.source === "hermes" ? "Hermes, from your notes" : "the pet's own model (Hermes is unavailable)";
+  a.innerHTML = `<p class="label">Answer</p><div class="body">${markdown(m.text)}</div><p class="src">From ${from} · ${(m.ms / 1000).toFixed(1)} s</p>`;
+  if (askMode) sendBtn.disabled = false;
+  scrollChat();
+}
+
 // ── send a sentence ──────────────────────────────────────────
 function send() {
   const text = textEl.value.trim();
+  if (text && askMode && awake) {
+    if (pendingAnswer) return toast("Still looking into your last question.");
+    textEl.value = "";
+    ask(text);
+    setAskMode(false); // back to practice; the answer arrives in the thread
+    return;
+  }
   if (!text || thinking || !awake) return;
   thinking = true;
   sendBtn.disabled = true;
@@ -268,9 +326,15 @@ function renderReview() {
   $("review").innerHTML = rows
     .map(
       ([point, g]) =>
-        `<li><div class="top"><span>${esc(point)}</span><span class="n">×${g.n}</span></div><p class="eg" lang="ja"><del>${esc(g.original)}</del> → <ins>${esc(g.fix)}</ins></p></li>`,
+        `<li><div class="top"><span>${esc(point)}</span><span class="n">×${g.n}</span></div><p class="eg" lang="ja"><del>${esc(g.original)}</del> → <ins>${esc(g.fix)}</ins></p><button class="chip-btn ask-about" type="button" data-point="${esc(point)}">Ask about this</button></li>`,
     )
     .join("");
+  for (const b of $("review").querySelectorAll<HTMLButtonElement>(".ask-about"))
+    b.addEventListener("click", () => {
+      if (!awake) return;
+      const g = grammar.get(b.dataset.point!);
+      ask(`Explain "${b.dataset.point}". I said ${g?.original ?? ""} but it should be ${g?.fix ?? ""}. Why?`);
+    });
 }
 
 // ── chat thread ──────────────────────────────────────────────
@@ -288,7 +352,7 @@ function userEntry(text: string) {
 }
 
 /** The cat's line: Japanese, with the English behind a tap and replay on the latest line only. */
-function petEntry(ja: string, en: string) {
+function petEntry(id: string, ja: string, en: string) {
   $("chatEmpty").hidden = true;
   chat.querySelectorAll(".msg.pet .replay").forEach((r) => r.remove());
   const e = document.createElement("div");
@@ -301,6 +365,7 @@ function petEntry(ja: string, en: string) {
     const p = e.querySelector<HTMLElement>(".en")!;
     p.hidden = !p.hidden;
     enBtn.setAttribute("aria-pressed", String(!p.hidden));
+    if (!p.hidden) net.send({ type: "reveal", sayId: id }); // recorded as a listening miss
   });
   e.querySelector(".again")!.addEventListener("click", () => net.send({ type: "repeat" }));
   e.querySelector(".slow")!.addEventListener("click", () => net.send({ type: "repeat", slow: true }));
@@ -345,9 +410,31 @@ function toast(msg: string) {
   toastTimer = window.setTimeout(() => (t.hidden = true), 4000);
 }
 
+/** The little markdown answers use: paragraphs, "- " lists, **bold**, `code`. Escapes everything else. */
+function markdown(src: string): string {
+  const inline = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  const out: string[] = [];
+  let list: string[] = [];
+  const flush = () => {
+    if (list.length) out.push(`<ul>${list.map((li) => `<li>${inline(li)}</li>`).join("")}</ul>`);
+    list = [];
+  };
+  for (const raw of src.split("\n")) {
+    const line = raw.trim();
+    const item = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (item) list.push(item[1]);
+    else {
+      flush();
+      if (line) out.push(`<p>${inline(line.replace(/^#+\s*/, ""))}</p>`);
+    }
+  }
+  flush();
+  return out.join("");
+}
+
 function esc(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 // ?demo fills the screen with sample messages, for looking at the design without the server.
-if (demo) import("./demo.ts").then((d) => d.run(onMessage, setAwake, (t) => (lastUserEntry = userEntry(t))));
+if (demo) import("./demo.ts").then((d) => d.run(onMessage, setAwake, (t) => (lastUserEntry = userEntry(t)), ask));
