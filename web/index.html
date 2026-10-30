@@ -1,44 +1,94 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>neko</title>
+<link rel="icon" href="/pet/mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Noto+Serif+JP:wght@500&display=swap" rel="stylesheet">
 </head>
 <body>
-<div id="app">
-  <header>
-    <div class="name"><span id="petName">ねこ</span> <span id="conn" class="dot" title="connecting…"></span></div>
-    <div class="stats">
-      <div class="stat" title="Fullness — practising feeds me"><span>🍙</span><div class="bar"><i id="fullBar"></i></div></div>
-      <div class="stat" title="Happiness — practise and pet me"><span>💗</span><div class="bar"><i id="joyBar"></i></div></div>
-      <div class="chip" title="Days in a row you practised">🔥 <b id="streak">0</b></div>
-      <div class="chip" title="Sentences today">✏️ <b id="today">0</b></div>
+<header class="bar">
+  <a class="brand" href="/"><img src="/pet/mark.png" alt="" width="24" height="24"><span>neko</span></a>
+  <div class="bar-right">
+    <span id="conn" class="conn" data-state="off">Not connected</span>
+    <span id="level" class="pill" hidden></span>
+    <a href="/lab.html">Voice lab</a>
+  </div>
+</header>
+
+<main class="canvas">
+  <div class="title">
+    <h1 id="greeting" lang="ja">こんにちは、<span class="petName">ねこ</span></h1>
+    <p class="sub"><span id="date"></span> · <span id="finding">Wake <span class="petName" lang="ja">ねこ</span> to start today's practice.</span></p>
+  </div>
+
+  <section class="kpis" aria-label="Stats">
+    <div class="kpi">
+      <h2 class="kpi-label">Fullness</h2>
+      <p class="kpi-value"><span id="full" class="skel">—</span><small> /100</small></p>
+      <div class="track"><i id="fullBar"></i></div>
+      <p class="kpi-cap" id="fullCap">&nbsp;</p>
     </div>
-  </header>
-
-  <div id="stage"></div>
-
-  <section id="chat" aria-live="polite"></section>
-
-  <section id="turn" class="card">
-    <textarea id="text" rows="2" placeholder="Hold the mic and speak Japanese — or type here"></textarea>
-    <div class="row">
-      <button id="talk" class="talk">🎤 Hold to talk</button>
-      <button id="send">Send</button>
+    <div class="kpi">
+      <h2 class="kpi-label">Happiness</h2>
+      <p class="kpi-value"><span id="joy" class="skel">—</span><small> /100</small></p>
+      <div class="track"><i id="joyBar"></i></div>
+      <p class="kpi-cap" id="joyCap">&nbsp;</p>
     </div>
-    <div class="hint">Hold <b>Space</b> to talk · check the transcript, then <b>Enter</b> · stroke the cat to pet it</div>
+    <div class="kpi">
+      <h2 class="kpi-label">Streak</h2>
+      <p class="kpi-value"><span id="streak" class="skel">—</span><small id="streakUnit"> days</small></p>
+      <p class="kpi-cap" id="streakCap">&nbsp;</p>
+    </div>
+    <div class="kpi">
+      <h2 class="kpi-label">Today</h2>
+      <p class="kpi-value"><span id="today" class="skel">—</span><small id="todayUnit"> sentences</small></p>
+      <p class="kpi-cap">Each one feeds <span class="petName" lang="ja">ねこ</span> 15</p>
+    </div>
   </section>
 
-  <section id="debug" class="card hidden">
-    <b>Debug: force an animation</b> <span class="hint">(this browser only)</span>
-    <div class="row" id="debugBtns"></div>
-  </section>
-  <p class="foot"><a href="/lab.html">lab page</a> · <a href="/?debug">debug</a> · voice: VOICEVOX</p>
-</div>
+  <div class="grid">
+    <section class="panel stage-panel" aria-label="The cat. Stroke or tap it to pet it.">
+      <div id="stage"></div>
+      <div class="stage-foot">
+        <p id="catState" class="cat-state">Asleep</p>
+        <button id="wakeBtn" class="btn primary" type="button">Wake <span class="petName" lang="ja">ねこ</span></button>
+        <button id="petBtn" class="btn" type="button" hidden>Pet <span class="petName" lang="ja">ねこ</span></button>
+      </div>
+    </section>
 
-<div id="wake"><button id="wakeBtn">🐱 Tap to wake <span id="wakeName">ねこ</span></button></div>
-<div id="toast" class="hidden"></div>
+    <section class="panel chat-panel">
+      <div class="head"><h2>Conversation</h2><span id="turnCount" class="meta">This visit</span></div>
+      <div id="chat" aria-live="polite">
+        <p id="chatEmpty" class="empty">Wake <span class="petName" lang="ja">ねこ</span> to hear today's first line.</p>
+      </div>
+      <div class="composer">
+        <label for="text" class="sr">Your reply in Japanese</label>
+        <textarea id="text" lang="ja" rows="2" placeholder="話してみて… or type here" disabled></textarea>
+        <div class="actions">
+          <button id="talk" class="btn primary talk" type="button" disabled>Hold to talk</button>
+          <button id="send" class="btn" type="button" disabled>Send</button>
+          <span class="keys"><kbd>Space</kbd> hold to talk · <kbd>Enter</kbd> send</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel review">
+      <div class="head"><h2>To review</h2><span class="meta">From this visit's corrections</span></div>
+      <ul id="review" class="review-list"></ul>
+      <p id="reviewEmpty" class="empty">Nothing to review yet.</p>
+    </section>
+
+    <section id="debug" class="panel debug" hidden>
+      <div class="head"><h2>Debug: force an animation</h2><span class="meta">This browser only</span></div>
+      <div class="actions" id="debugBtns"></div>
+    </section>
+  </div>
+</main>
+
+<div id="toast" role="status" hidden></div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
