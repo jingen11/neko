@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>neko — speech loop</title>
+<style>
+  :root {
+    --bg: #faf7f2; --panel: #ffffff; --ink: #2b2622; --muted: #8a8079; --line: #e8e1d8;
+    --accent: #e0793c; --accent-ink: #fff; --ok: #3f8f5a; --bad: #c0453a; --pet: #fff4ea; --me: #eef3fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1a18; --panel: #262320; --ink: #eee7df; --muted: #9c938b; --line: #3a3530;
+      --accent: #f08a4b; --accent-ink: #1c1a18; --ok: #6cc08a; --bad: #ec7b70; --pet: #33281f; --me: #232b37; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 16px 16px 200px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 8px 0; }
+  .status { font-size: 13px; color: var(--muted); }
+  .status b.ok { color: var(--ok); } .status b.bad { color: var(--bad); }
+  #log { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+  .msg { padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); }
+  .me { background: var(--me); align-self: flex-end; max-width: 90%; }
+  .pet { background: var(--pet); align-self: flex-start; max-width: 90%; }
+  .ja { font-size: 20px; }
+  .en { color: var(--muted); font-size: 14px; }
+  .en.hidden { filter: blur(5px); cursor: pointer; user-select: none; }
+  .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 10px; padding: 6px 12px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .card { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 14px; }
+  .card.good { border-color: var(--ok); } .card.fix { border-color: var(--bad); }
+  .card .corrected { font-size: 18px; }
+  .card del { color: var(--bad); } .card ins { color: var(--ok); text-decoration: none; font-weight: 600; }
+  .timings { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  #dock { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
+  #dock .inner { max-width: 720px; margin: 0 auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+  textarea { width: 100%; font: inherit; font-size: 18px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); resize: none; }
+  #talk { background: var(--accent); color: var(--accent-ink); border: none; padding: 14px; font-size: 18px; font-weight: 600; touch-action: none; }
+  #talk.rec { background: var(--bad); }
+  .hint { font-size: 12px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>🐱 neko — speech loop</h1>
+    <div class="status" id="status">checking services…</div>
+  </header>
+  <div id="log"></div>
+</main>
+
+<div id="dock"><div class="inner">
+  <textarea id="text" rows="2" placeholder="Hold the button and speak Japanese — or type here. Check the transcript, then Send."></textarea>
+  <div class="row" style="margin:0">
+    <button id="talk" style="flex:1">🎤 Hold to talk</button>
+    <button id="send">Send ⏎</button>
+  </div>
+  <div class="hint">Hold <b>Space</b> (outside the text box) to talk · Edit the transcript if it misheard you</div>
+</div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const log = $("log"), textEl = $("text"), talkBtn = $("talk"), sendBtn = $("send");
+const history = [];
+let lastSttMs = null;
+
+// ── service status ───────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const h = await (await fetch("/api/health")).json();
+    $("status").innerHTML = `level <b>${h.level}</b> · ` + ["llama", "stt", "voicevox"]
+      .map((k) => `${k} <b class="${h[k] === "ok" ? "ok" : "bad"}" title="${h[k]}">${h[k] === "ok" ? "●" : "✕"}</b>`).join(" · ");
+  } catch { $("status").textContent = "server unreachable"; }
+}
+refreshStatus(); setInterval(refreshStatus, 15000);
+
+// ── microphone capture (push to talk) ────────────────────────
+let ctx, source, node, chunks = [], recording = false;
+const worklet = `class Rec extends AudioWorkletProcessor {
+  process(inputs) { const ch = inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; }
+} registerProcessor("rec", Rec);`;
+
+async function initMic() {
+  if (ctx) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  ctx = new AudioContext();
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([worklet], { type: "text/javascript" })));
+  source = ctx.createMediaStreamSource(stream);
+  node = new AudioWorkletNode(ctx, "rec");
+  node.port.onmessage = (e) => { if (recording) chunks.push(e.data); };
+  source.connect(node);
+}
+
+async function startRec() {
+  if (recording) return;
+  try { await initMic(); } catch (err) { alert("Microphone unavailable: " + err.message + "\n\nThe page must be opened as http://localhost (use an SSH tunnel if the box is remote)."); return; }
+  await ctx.resume();
+  chunks = []; recording = true;
+  talkBtn.classList.add("rec"); talkBtn.textContent = "🔴 Listening… release to stop";
+}
+
+async function stopRec() {
+  if (!recording) return;
+  recording = false;
+  talkBtn.classList.remove("rec"); talkBtn.textContent = "⏳ Transcribing…"; talkBtn.disabled = true;
+  try {
+    const pcm = toPcm16(downsample(concat(chunks), ctx.sampleRate, 16000));
+    if (pcm.length < 1600) return;
+    const res = await fetch("/api/stt", { method: "POST", headers: { "content-type": "application/octet-stream", "x-sample-rate": "16000" }, body: pcm });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? res.status);
+    lastSttMs = data.ms;
+    textEl.value = data.text; textEl.focus();
+  } catch (err) { alert("Speech-to-text failed: " + err.message); }
+  finally { talkBtn.disabled = false; talkBtn.textContent = "🎤 Hold to talk"; }
+}
+
+const concat = (parts) => { const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
+function downsample(input, from, to) {
+  if (from === to) return input;
+  const ratio = from / to, out = new Float32Array(Math.floor(input.length / ratio));
+  for (let i = 0; i < out.length; i++) {
+    const start = Math.floor(i * ratio), end = Math.min(Math.floor((i + 1) * ratio), input.length);
+    let sum = 0; for (let j = start; j < end; j++) sum += input[j];
+    out[i] = sum / Math.max(1, end - start);
+  }
+  return out;
+}
+function toPcm16(f32) { const out = new Int16Array(f32.length); for (let i = 0; i < f32.length; i++) out[i] = Math.max(-1, Math.min(1, f32[i])) * 32767; return out; }
+
+talkBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); startRec(); });
+for (const ev of ["pointerup", "pointerleave", "pointercancel"]) talkBtn.addEventListener(ev, stopRec);
+document.addEventListener("keydown", (e) => { if (e.code === "Space" && e.target !== textEl && !e.repeat) { e.preventDefault(); startRec(); } });
+document.addEventListener("keyup", (e) => { if (e.code === "Space" && e.target !== textEl) { e.preventDefault(); stopRec(); } });
+
+// ── send → correction + pet reply → voice ────────────────────
+sendBtn.addEventListener("click", send);
+textEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+
+async function send() {
+  const text = textEl.value.trim();
+  if (!text) return;
+  textEl.value = ""; sendBtn.disabled = true;
+  const me = el("div", "msg me", `<div class="ja">${esc(text)}</div><div class="card">checking…</div>`);
+  log.append(me); me.scrollIntoView({ behavior: "smooth" });
+  try {
+    const res = await fetch("/api/respond", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, history }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? data.message ?? res.status);
+    me.querySelector(".card").replaceWith(correctionCard(data.correction));
+    history.push({ role: "user", content: text }, { role: "assistant", content: data.reply.ja });
+    const ttsMs = await petSays(data.reply);
+    me.append(el("div", "timings", [lastSttMs != null && `speech→text ${lastSttMs}ms`, `correction ${data.timings.correctMs}ms`, `reply ${data.timings.replyMs}ms`, ttsMs != null && `voice ${ttsMs}ms`].filter(Boolean).join(" · ")));
+    lastSttMs = null;
+  } catch (err) {
+    me.querySelector(".card").textContent = "error: " + err.message;
+  } finally { sendBtn.disabled = false; }
+}
+
+function correctionCard(c) {
+  if (c.is_correct) return el("div", "card good", `✅ Correct!${c.natural && c.natural !== c.corrected ? `<div>More natural: ${esc(c.natural)}</div>` : ""}`);
+  const items = c.mistakes.map((m) => `<li><del>${esc(m.original)}</del> → <ins>${esc(m.fix)}</ins> <b>${esc(m.grammar_point)}</b><br>${esc(m.explanation)}</li>`).join("");
+  return el("div", "card fix", `<div class="corrected">✏️ ${esc(c.corrected)}</div><ul style="margin:6px 0 0 18px;padding:0">${items}</ul>${c.natural && c.natural !== c.corrected ? `<div style="margin-top:6px">More natural: ${esc(c.natural)}</div>` : ""}`);
+}
+
+async function petSays(reply) {
+  const moods = { happy: "😺", curious: "🐱", sleepy: "😴", excited: "😸", worried: "🙀" };
+  const box = el("div", "msg pet", `<div class="ja">${moods[reply.mood] ?? "🐱"} ${esc(reply.ja)}</div><div class="en hidden" title="tap to show translation">${esc(reply.en)}</div><div class="row"><button data-a="play">🔊 Again</button><button data-a="slow">🐢 Slow</button></div>`);
+  box.querySelector(".en").addEventListener("click", (e) => e.target.classList.remove("hidden"));
+  box.querySelector("[data-a=play]").addEventListener("click", () => play(reply.ja, false));
+  box.querySelector("[data-a=slow]").addEventListener("click", () => play(reply.ja, true));
+  log.append(box); box.scrollIntoView({ behavior: "smooth" });
+  return play(reply.ja, false);
+}
+
+async function play(text, slow) {
+  try {
+    const res = await fetch("/api/tts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, slow }) });
+    if (!res.ok) throw new Error((await res.json()).error ?? res.status);
+    const ms = Number(res.headers.get("x-tts-ms"));
+    const audio = new Audio(URL.createObjectURL(await res.blob()));
+    await audio.play();
+    return ms;
+  } catch (err) { console.warn("tts failed", err); return null; }
+}
+
+function el(tag, cls, html) { const e = document.createElement(tag); e.className = cls; e.innerHTML = html; return e; }
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
+</script>
+</body>
+</html>
