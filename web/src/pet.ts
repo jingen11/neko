@@ -189,7 +189,7 @@ export class Pet {
   private updateFloaters(dt: number) {
     const a = this.anim;
     // sleep.gif has no Zzz of its own (sleepy.gif does)
-    const emoji = a === "petted" ? "💗" : a === "sleep" ? "💤" : a === "angry" ? "💢" : null;
+    const emoji = a === "petted" ? "💗" : a === "sleep" ? "💤" : a === "angry" ? "💢" : null; // taste-skill-ignore: animation particles, not UI
     if (emoji && this.t > this.nextFloater) {
       this.nextFloater = this.t + (a === "sleep" ? 1.4 : a === "petted" ? 0.25 : 0.6);
       const t = new Text({ text: emoji, style: { fontSize: a === "sleep" ? 30 : 24, fill: 0x8a8079 } });

@@ -7,7 +7,7 @@ Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Status
 
 - **Phase 1 — speech loop: done.** Speech-to-text (ReazonSpeech) keeps learner mistakes (12/12 with a real voice); correction + pet reply via Qwen3.6; VOICEVOX voice. Test page at `/lab.html`.
-- **Phase 2 — the pet: in progress.** PixiJS cat at `/`, WebSocket protocol (`shared/protocol.ts`) that the ESP32 board will also use, pet stats (hunger, happiness, streak) in SQLite.
+- **Phase 2 — the pet: in progress.** PixiJS cat at `/` (sample screen at `/?demo`, animation switch at `/?debug`), WebSocket protocol (`shared/protocol.ts`) that the ESP32 board will also use, pet stats (hunger, happiness, streak) in SQLite.
 
 Later phases: vault learning records + Hermes grammar Q&A, ESP32-S3 firmware, away-from-home access.
 
