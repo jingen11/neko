@@ -1,62 +1,109 @@
-# neko
+# neko 🐱
 
-Central gateway for every LLM call to the local llama.cpp server. Apps talk to neko instead of llama.cpp directly; neko forwards the request unchanged, then logs it to an Obsidian vault and to usage stats.
+A Japanese-learning tamagotchi. The pet lives in a web app on the box and will travel with you on an ESP32-S3 board. It talks to you in Japanese at your JLPT level, corrects your grammar when you speak, and (later) records your mistakes in an Obsidian vault so Hermes Agent can coach you.
 
-```
-your apps ──▶ neko :8081 ──▶ llama.cpp :8080
-                 │
-                 └──▶ Obsidian vault (one note per chat call + stats index)
-```
+Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Run
+## Status
+
+**Phase 1 — speech loop (in progress).** Browser test page: hold to talk → speech-to-text → grammar correction + pet reply → pet speaks. Plus a bake-off to pick the speech-to-text model that keeps learner mistakes instead of auto-correcting them.
+
+Later phases: PixiJS pet and WebSocket protocol, vault learning records + Hermes grammar Q&A, ESP32-S3 firmware, away-from-home access.
+
+## Services
+
+neko is a Fastify server that calls three local services:
+
+| Service | Default URL | What for |
+|---|---|---|
+| llama.cpp (Qwen3.6) | `http://127.0.0.1:8080` | Grammar correction and pet replies (thinking off, JSON output) |
+| sherpa-onnx offline WebSocket server | `ws://127.0.0.1:6006` | Japanese speech-to-text (ReazonSpeech or SenseVoice) |
+| VOICEVOX engine | `http://127.0.0.1:50021` | The pet's voice |
+
+Binaries live in `~/apps/`, speech models in `~/models/stt/`.
+
+### Starting the speech-to-text server
+
+ReazonSpeech (Zipformer transducer):
 
 ```bash
-cp .env.example .env   # set NEKO_VAULT to your Obsidian vault
-npm start              # or: npm run dev (restarts on file changes)
+SHERPA=~/apps/sherpa-onnx-v2.0.1-linux-x64-shared
+M=~/models/stt/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01
+LD_LIBRARY_PATH=$SHERPA/lib $SHERPA/bin/sherpa-onnx-offline-websocket-server \
+  --port=6006 --num-threads=4 \
+  --tokens=$M/tokens.txt --encoder=$M/encoder-*.onnx --decoder=$M/decoder-*.onnx --joiner=$M/joiner-*.onnx
 ```
 
-Requires Node 23.6+ (runs the TypeScript directly). `npm run typecheck` checks types.
+SenseVoice:
 
-## Using it from an app
-
-Point any OpenAI-compatible client at `http://127.0.0.1:8081/v1`. The API key can be any string. Send an `X-Neko-Client` header so the logs and stats show which app made the call; if it's missing, neko uses the OpenAI `user` field, then `unknown`.
-
-```ts
-import OpenAI from "openai";
-const llm = new OpenAI({
-  baseURL: "http://127.0.0.1:8081/v1",
-  apiKey: "none",
-  defaultHeaders: { "X-Neko-Client": "my-app" },
-});
+```bash
+M=~/models/stt/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
+LD_LIBRARY_PATH=$SHERPA/lib $SHERPA/bin/sherpa-onnx-offline-websocket-server \
+  --port=6007 --num-threads=4 \
+  --tokens=$M/tokens.txt --sense-voice-model=$M/model.int8.onnx --sense-voice-language=ja
 ```
 
-## Endpoints
+(Exact model file names are confirmed once the downloads finish; these will move into systemd units.)
 
-| Path | What it does |
-| --- | --- |
-| `POST /v1/chat/completions` | Proxied (streaming and non-streaming); saved as a vault note + stats entry |
-| `GET /neko/health` | neko status plus llama.cpp's `/health` |
-| `GET /neko/stats?since=<ISO date>` | Totals, by client, by endpoint, by day, and the 20 most recent calls |
-| anything else | Passed through to llama.cpp (`/v1/models`, `/v1/embeddings`, `/tokenize`, ...). Non-GET calls go into the stats index |
+### Starting VOICEVOX
 
-Each response has an `x-neko-request-id` header that matches the `id` in the vault note.
-
-## Vault layout
-
-```
-<NEKO_VAULT>/
-  neko/calls/2026-10-30/000146-my-app-66875b59.md   # one note per chat call
-  .neko/calls.jsonl                                  # stats index (hidden in Obsidian)
+```bash
+~/apps/voicevox/<extracted engine>/run --host 127.0.0.1 --port 50021
 ```
 
-Notes carry frontmatter (`client`, `model`, `prompt_tokens`, `completion_tokens`, `tokens_per_sec`, `ttft_ms`, `duration_ms`, `status`, ...) and the tag `#neko/call`, so they can be queried with Dataview. Model reasoning is stored in a collapsed callout above the answer.
+Voice credit: `VOICEVOX:<character name>` for whichever voice the pet uses.
 
-## Config (`.env`)
+## Running neko
 
-| Var | Default |
-| --- | --- |
-| `NEKO_HOST` / `NEKO_PORT` | `127.0.0.1` / `8081` |
-| `LLAMA_URL` | `http://127.0.0.1:8080` |
-| `NEKO_VAULT` | `./vault` |
-| `NEKO_VAULT_FOLDER` | `neko` |
-| `NEKO_LOG_LEVEL` | `info` |
+```bash
+cd server
+cp .env.example .env     # set VOICEVOX_SPEAKER, NEKO_LEVEL, service URLs
+npm install
+npm start                # http://127.0.0.1:8081
+```
+
+The microphone only works on a secure origin, so open the page as `http://localhost:8081`. If the box is remote, tunnel it first:
+
+```bash
+ssh -L 8081:localhost:8081 <box>
+```
+
+### Config (`server/.env`)
+
+| Var | Default | |
+|---|---|---|
+| `NEKO_HOST` / `NEKO_PORT` | `127.0.0.1` / `8081` | |
+| `LLAMA_URL` | `http://127.0.0.1:8080` | |
+| `STT_URL` | `ws://127.0.0.1:6006` | sherpa-onnx server |
+| `VOICEVOX_URL` | `http://127.0.0.1:50021` | |
+| `VOICEVOX_SPEAKER` | `3` | style id; list with `GET /api/voices` |
+| `NEKO_LEVEL` | `N4` | JLPT level the pet speaks at (N5–N1) |
+
+### API
+
+| Endpoint | |
+|---|---|
+| `POST /api/stt` | Raw 16-bit mono PCM (`x-sample-rate`, default 16000) → `{text, ms}` |
+| `POST /api/respond` | `{text, history}` → `{correction, reply, timings}` |
+| `POST /api/tts` | `{text, slow}` → WAV in the pet's voice |
+| `GET /api/voices` | VOICEVOX voices |
+| `GET /api/health` | Status of llama.cpp, STT and VOICEVOX |
+
+## STT bake-off
+
+Checks whether each speech-to-text model keeps deliberate grammar mistakes (VOICEVOX speaks 10 N4-level wrong sentences + 2 correct controls):
+
+```bash
+cd server
+npm run bakeoff -- reazonspeech=ws://127.0.0.1:6006 sensevoice=ws://127.0.0.1:6007
+```
+
+## Layout
+
+```
+docs/ARCHITECTURE.md   design and decisions
+server/                Fastify server, clients for llama.cpp / sherpa-onnx / VOICEVOX
+  src/                 config, stt, tts, llm, tutor (correction + pet reply), index (routes)
+  public/              Phase 1 browser test page
+  scripts/             STT bake-off
+```
