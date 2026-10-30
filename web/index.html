@@ -19,14 +19,7 @@
 
   <div id="stage"></div>
 
-  <section id="bubble" class="card hidden">
-    <div id="sayJa" class="ja"></div>
-    <div id="sayEn" class="en blur" title="Tap to show the translation"></div>
-    <div class="row">
-      <button id="again">🔊 Again</button>
-      <button id="slow">🐢 Slow</button>
-    </div>
-  </section>
+  <section id="chat" aria-live="polite"></section>
 
   <section id="turn" class="card">
     <textarea id="text" rows="2" placeholder="Hold the mic and speak Japanese — or type here"></textarea>
@@ -35,14 +28,13 @@
       <button id="send">Send</button>
     </div>
     <div class="hint">Hold <b>Space</b> to talk · check the transcript, then <b>Enter</b> · stroke the cat to pet it</div>
-    <div id="correction"></div>
   </section>
 
-  <details id="logWrap">
-    <summary>Conversation</summary>
-    <div id="log"></div>
-  </details>
-  <p class="foot"><a href="/lab.html">lab page</a> · voice: VOICEVOX</p>
+  <section id="debug" class="card hidden">
+    <b>Debug: force an animation</b> <span class="hint">(this browser only)</span>
+    <div class="row" id="debugBtns"></div>
+  </section>
+  <p class="foot"><a href="/lab.html">lab page</a> · <a href="/?debug">debug</a> · voice: VOICEVOX</p>
 </div>
 
 <div id="wake"><button id="wakeBtn">🐱 Tap to wake <span id="wakeName">ねこ</span></button></div>

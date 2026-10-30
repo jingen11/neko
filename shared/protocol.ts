@@ -60,7 +60,11 @@ export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | 
 
 // ── server → client ──────────────────────────────────────────────────────────
 
-export type Anim = "idle" | "listen" | "think" | "talk" | "happy" | "sad" | "eat" | "sleep" | "petted";
+export type Anim =
+  | "idle" | "listen" | "think" | "talk" | "happy" | "sad" | "eat" | "sleep" | "petted"
+  | "sleepy" // drowsy hour before bedtime and after waking (yawns now and then)
+  | "sick" // starving
+  | "angry"; // woken up by petting at night
 export type Mood = "happy" | "curious" | "sleepy" | "excited" | "worried" | "hungry" | "sad";
 
 export interface PetStats {

@@ -112,8 +112,16 @@ export function restingMood(s = stats()): Mood {
   return "happy";
 }
 
-export function restingAnim(mood: Mood): Anim {
+/** Drowsy hour on each side of bedtime. */
+export const isDrowsy = (t = Date.now()) => {
+  const h = localHour(t);
+  return h === (BEDTIME.from + 23) % 24 || h === BEDTIME.to;
+};
+
+export function restingAnim(mood: Mood, s = stats()): Anim {
   if (mood === "sleepy") return "sleep";
+  if (s.hunger >= 90) return "sick";
+  if (isDrowsy()) return "sleepy";
   if (mood === "hungry" || mood === "sad") return "sad";
   return "idle";
 }

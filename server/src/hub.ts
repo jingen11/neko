@@ -49,7 +49,7 @@ function setState(anim?: Anim, mood?: Mood, holdMs?: number) {
     eatNext = false;
     return setState("eat", "happy", 1800);
   }
-  sendAll({ type: "state", anim: anim ?? pet.restingAnim(resting), mood: mood ?? resting, stats });
+  sendAll({ type: "state", anim: anim ?? pet.restingAnim(resting, stats), mood: mood ?? resting, stats });
   if (holdMs) revertTimer = setTimeout(() => setState(), holdMs);
 }
 
@@ -126,9 +126,11 @@ async function onConfirm(c: Client, text: string) {
 }
 
 async function onTouch(c: Client) {
+  // petting it awake at night makes it grumpy, then it goes back to sleep
+  if (pet.isBedtime()) return setState("angry", "worried", 1800);
   const counted = pet.petted();
   setState("petted", "happy", 2000);
-  if (counted && !pet.isBedtime() && !c.busy) await say(c, "にゃーん♪", "Meow♪", "happy");
+  if (counted && !c.busy) await say(c, "にゃーん♪", "Meow♪", "happy");
 }
 
 async function onMessage(c: Client, msg: ClientMessage) {

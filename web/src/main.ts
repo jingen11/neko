@@ -1,5 +1,5 @@
 import { Application } from "pixi.js";
-import type { CorrectionMsg, ServerMessage } from "../../shared/protocol.ts";
+import type { Anim, CorrectionMsg, ServerMessage } from "../../shared/protocol.ts";
 import { AudioIO } from "./audio.ts";
 import { Net } from "./net.ts";
 import { Pet } from "./pet.ts";
@@ -47,11 +47,7 @@ function onMessage(m: ServerMessage) {
       $("today").textContent = String(m.stats.practicedToday);
       break;
     case "say":
-      $("bubble").classList.remove("hidden");
-      $("sayJa").textContent = m.ja;
-      $("sayEn").textContent = m.en;
-      $("sayEn").classList.add("blur");
-      logEntry("pet", m.ja);
+      petEntry(m.ja, m.en);
       break;
     case "audio_start":
       audio.voiceStart(m.rate);
@@ -71,6 +67,7 @@ function onMessage(m: ServerMessage) {
       showCorrection(m);
       break;
     case "error":
+      lastUserEntry?.querySelector(".check.wait")?.remove();
       thinking = false;
       sendBtn.disabled = false;
       setTalk("idle");
@@ -136,8 +133,7 @@ function send() {
   sendBtn.disabled = true;
   textEl.value = "";
   net.send({ type: "confirm", text });
-  lastUserEntry = logEntry("me", text);
-  $("correction").innerHTML = `<div class="fix wait">✏️ checking your Japanese…</div>`;
+  lastUserEntry = userEntry(text);
 }
 sendBtn.addEventListener("click", send);
 textEl.addEventListener("keydown", (e) => {
@@ -147,31 +143,73 @@ textEl.addEventListener("keydown", (e) => {
   }
 });
 
+/** The correction goes under your own message: a small tick when it's right, the fix when it isn't. */
 function showCorrection(c: CorrectionMsg) {
-  const natural = c.natural && c.natural !== c.corrected ? `<div style="margin-top:6px">More natural: ${esc(c.natural)}</div>` : "";
+  const e = lastUserEntry;
+  if (!e) return;
+  e.querySelector(".check")?.remove();
+  const natural = c.natural && c.natural !== c.corrected && c.natural !== c.text ? `<div class="natural">💡 ${esc(c.natural)}</div>` : "";
   const html = c.is_correct
-    ? `<div class="fix good">✅ <b>${esc(c.text)}</b> — correct!${natural}</div>`
-    : `<div class="fix bad"><div class="corrected">✏️ ${esc(c.corrected)}</div><ul>${c.mistakes
+    ? `<div class="check good">✅ correct${natural}</div>`
+    : `<div class="check bad"><div class="corrected">✏️ ${esc(c.corrected)}</div><ul>${c.mistakes
         .map((m) => `<li><del>${esc(m.original)}</del> → <ins>${esc(m.fix)}</ins> <b>${esc(m.grammar_point)}</b><br>${esc(m.explanation)}</li>`)
         .join("")}</ul>${natural}</div>`;
-  $("correction").innerHTML = html;
-  lastUserEntry?.insertAdjacentHTML("beforeend", html);
+  e.insertAdjacentHTML("beforeend", html);
+  scrollChat();
 }
 
-// ── pet's line: translation + replay ─────────────────────────
-$("sayEn").addEventListener("click", () => $("sayEn").classList.remove("blur"));
-$("again").addEventListener("click", () => net.send({ type: "repeat" }));
-$("slow").addEventListener("click", () => net.send({ type: "repeat", slow: true }));
+// ── chat thread ──────────────────────────────────────────────
+const chat = $("chat");
 
-// ── helpers ──────────────────────────────────────────────────
-function logEntry(who: "me" | "pet", text: string) {
+function userEntry(text: string) {
   const e = document.createElement("div");
-  e.className = `entry ${who}`;
-  e.innerHTML = `<div class="ja">${who === "pet" ? "🐱 " : ""}${esc(text)}</div>`;
-  $("log").append(e);
+  e.className = "msg me";
+  e.innerHTML = `<div class="ja">${esc(text)}</div><div class="check wait">checking…</div>`;
+  chat.append(e);
+  scrollChat();
   return e;
 }
 
+/** The pet's line: Japanese, with the English hidden behind a tap and replay buttons on the latest line. */
+function petEntry(ja: string, en: string) {
+  chat.querySelectorAll(".msg.pet .replay").forEach((r) => r.remove()); // only the latest line can be replayed
+  const e = document.createElement("div");
+  e.className = "msg pet";
+  e.innerHTML = `<div class="ja">${esc(ja)}</div>
+    <div class="row small"><button class="enBtn">EN</button><button class="replay again">🔊</button><button class="replay slow">🐢</button></div>
+    <div class="en hidden">${esc(en)}</div>`;
+  e.querySelector(".enBtn")!.addEventListener("click", () => e.querySelector(".en")!.classList.toggle("hidden"));
+  e.querySelector(".again")!.addEventListener("click", () => net.send({ type: "repeat" }));
+  e.querySelector(".slow")!.addEventListener("click", () => net.send({ type: "repeat", slow: true }));
+  chat.append(e);
+  scrollChat();
+}
+
+function scrollChat() {
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// ── debug: force animations (open /?debug) ───────────────────
+if (new URLSearchParams(location.search).has("debug")) {
+  $("debug").classList.remove("hidden");
+  const anims: Anim[] = ["idle", "listen", "think", "talk", "happy", "sad", "eat", "sleep", "petted", "sleepy", "sick", "angry"];
+  const btns = $("debugBtns");
+  const add = (label: string, fn: () => void) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      btns.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
+      b.classList.add("on");
+      fn();
+    });
+    btns.append(b);
+  };
+  add("auto", () => pet?.force(null));
+  for (const a of anims) add(a, () => pet?.force(a));
+  add("yawn now", () => pet?.yawnNow());
+}
+
+// ── helpers ──────────────────────────────────────────────────
 let toastTimer: number | undefined;
 function toast(msg: string) {
   const t = $("toast");
