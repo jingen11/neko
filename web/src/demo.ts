@@ -39,6 +39,7 @@ export function run(onMessage: (m: ServerMessage) => void, wake: () => void, use
     question: "When do I drop は after time words like 明日?",
     text: "Use **は** after a time word only when you contrast it with another time.\n- 明日行きたいです。 (I want to go tomorrow.)\n- 明日は行きたいです。 (Tomorrow, at least, I want to go.)\nYou added は after 明日 twice this week, both times for a plain plan.",
     source: "hermes",
+    model: "Claude Opus 5.5",
     ms: 8400,
   });
 }

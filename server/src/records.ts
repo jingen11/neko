@@ -146,6 +146,16 @@ export function weakPoints(limit = 10, sinceDays = 30): WeakPoint[] {
     .all(since, limit) as unknown as WeakPoint[];
 }
 
+/** The latest grammar questions and answers (oldest first), so follow-up questions keep their context. */
+export function recentAsks(limit = 4, withinHours = 12): { question: string; answer: string }[] {
+  const since = Date.now() - withinHours * 3_600_000;
+  const rows = db.prepare("SELECT question, answer FROM asks WHERE at >= ? ORDER BY at DESC LIMIT ?").all(since, limit) as {
+    question: string;
+    answer: string;
+  }[];
+  return rows.reverse();
+}
+
 /** Names of grammar points already on record, so the correction model can reuse them. */
 export function knownPoints(limit = 40): string[] {
   return weakPoints(limit, 3650).map((p) => p.point);
@@ -273,7 +283,7 @@ function dailyNote(day: string): string {
     "",
     `${OWNED} See [[${ns()}/Index|Index]] for the overall picture.`,
     "",
-    `**${turns.length} sentences**, ${correct} correct, ${mistakes.length} mistakes.` + (points.length ? ` Points: ${points.map((p) => grammarLink(p)).join(", ")}.` : ""),
+    `**${turns.length} ${turns.length === 1 ? "sentence" : "sentences"}**, ${correct} correct, ${mistakes.length} ${mistakes.length === 1 ? "mistake" : "mistakes"}.` + (points.length ? ` Points: ${points.map((p) => grammarLink(p)).join(", ")}.` : ""),
     "",
   ];
 

@@ -149,9 +149,9 @@ async function onAsk(c: Client, question: string) {
   setState("think", "curious", 200_000);
   try {
     const a = await answerQuestion(question, log);
-    log.info(`answer from ${a.source} in ${a.ms}ms`);
-    send(c, { type: "answer", question, text: a.text, source: a.source, ms: a.ms });
-    records.logAsk(question, a.text, a.source === "hermes" ? "Hermes" : "the local model (Hermes unavailable)");
+    log.info(`answer from ${a.source} (${a.model}) in ${a.ms}ms`);
+    send(c, { type: "answer", question, text: a.text, source: a.source, model: a.model, ms: a.ms });
+    records.logAsk(question, a.text, a.source === "hermes" ? `Hermes (${a.model})` : `${a.model} (Hermes unavailable)`);
     setState("happy", "happy", 1500);
   } catch (err) {
     log.error({ err }, "question failed");

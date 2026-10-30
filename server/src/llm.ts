@@ -33,7 +33,7 @@ export async function chatJson<T>(messages: ChatMessage[], schema: object, opts:
 }
 
 /** Call llama.cpp for plain text (markdown allowed), thinking off. */
-export async function chatText(messages: ChatMessage[], opts: { temperature?: number; maxTokens?: number } = {}): Promise<{ text: string; ms: number }> {
+export async function chatText(messages: ChatMessage[], opts: { temperature?: number; maxTokens?: number } = {}): Promise<{ text: string; ms: number; model: string }> {
   const t0 = performance.now();
   const res = await fetch(`${config.llamaUrl}/v1/chat/completions`, {
     method: "POST",
@@ -47,5 +47,5 @@ export async function chatText(messages: ChatMessage[], opts: { temperature?: nu
   });
   const body = await res.json();
   if (!res.ok) throw new Error(`llama.cpp error ${res.status}: ${body?.error?.message ?? JSON.stringify(body)}`);
-  return { text: String(body.choices?.[0]?.message?.content ?? "").trim(), ms: Math.round(performance.now() - t0) };
+  return { text: String(body.choices?.[0]?.message?.content ?? "").trim(), ms: Math.round(performance.now() - t0), model: String(body.model ?? "local model") };
 }
