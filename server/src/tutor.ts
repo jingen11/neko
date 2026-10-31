@@ -115,8 +115,9 @@ export interface PetReply {
 const replySchema = {
   type: "object",
   properties: {
-    ja: { type: "string" },
-    en: { type: "string" },
+    // Length caps make the grammar close the string, so a rambling reply can't overrun max_tokens and truncate the JSON.
+    ja: { type: "string", maxLength: 80 },
+    en: { type: "string", maxLength: 200 },
     mood: { enum: ["happy", "curious", "sleepy", "excited", "worried"] },
   },
   required: ["ja", "en", "mood"],
@@ -132,6 +133,7 @@ ${SCENE}
 - The user is talking to you. When they give, buy, make or do something "for you" (〜てあげる, あげる), it is for YOU — react as the cat receiving it (e.g. thank them with 〜てくれる / ありがとう).
 - Speak only natural Japanese at JLPT ${config.level} level: ${config.level} vocabulary and grammar, at most one slightly harder word.
 - Keep each reply short: 1–2 short sentences, then a simple question to keep the conversation going.
+- "ja" is only ねこ's own spoken words, said once: no speaker names (like ねこ：), no quotation marks, no line breaks, no repeats.
 - "en" is a brief, plain English translation of "ja".
 - Stay in character. Never correct the user's grammar yourself — a separate teacher does that.
 - Use polite です/ます form unless the user speaks casually.`,
