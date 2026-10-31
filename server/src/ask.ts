@@ -19,9 +19,13 @@ export interface Answer {
 
 /** "claude-opus-5-5" → "Claude Opus 5.5"; "/models/Qwen3.6.gguf" → "Qwen3.6". */
 export function modelName(id: string): string {
-  const base = id.split("/").pop()!.replace(/\.gguf$/i, "");
+  const base = id
+    .split("/")
+    .pop()!
+    .replace(/\.gguf$/i, "");
   const claude = base.match(/^claude-([a-z]+)-(\d+)-(\d+)/i);
-  if (claude) return `Claude ${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}.${claude[3]}`;
+  if (claude)
+    return `Claude ${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}.${claude[3]}`;
   return base;
 }
 
@@ -34,14 +38,18 @@ async function questionLanguage(question: string): Promise<string> {
   try {
     const { data } = await chatJson<{ language: string }>(
       [
-        {
-          role: "system",
-          content:
-            'Name the language a learner wrote their question in, as an English name (e.g. "English", "Chinese", "Malay", "Japanese"). Ignore Japanese words or sentences the question is asking about: "why に here?" is English. Only a question written entirely in Japanese is "Japanese". Chinese words such as 那, 呢, 吗, 什么, 为什么, 怎么, 和, 的 around a particle mean Chinese: "那で呢？" is Chinese. Japanese questions use kana grammar such as は, ですか, の, ちがい.',
-        },
+        // {
+        //   role: "system",
+        //   content:
+        //     'Name the language a learner wrote their question in, as an English name (e.g. "English", "Chinese", "Malay", "Japanese"). Ignore Japanese words or sentences the question is asking about: "why に here?" is English. Only a question written entirely in Japanese is "Japanese". Chinese words such as 那, 呢, 吗, 什么, 为什么, 怎么, 和, 的 around a particle mean Chinese: "那で呢？" is Chinese. Japanese questions use kana grammar such as は, ですか, の, ちがい.',
+        // },
         { role: "user", content: question },
       ],
-      { type: "object", properties: { language: { type: "string" } }, required: ["language"] },
+      {
+        type: "object",
+        properties: { language: { type: "string" } },
+        required: ["language"],
+      },
       { temperature: 0, maxTokens: 20 },
     );
     return data.language.trim() || "the same language as the question";
@@ -80,15 +88,24 @@ function followUps(): ChatMessage[] {
   ]);
 }
 
-async function askHermes(question: string, summary: string, language: string): Promise<Answer> {
+async function askHermes(
+  question: string,
+  summary: string,
+  language: string,
+): Promise<Answer> {
   const t0 = performance.now();
   const res = await fetch(`${config.hermesUrl}/v1/chat/completions`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${config.hermesKey}` },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${config.hermesKey}`,
+    },
     signal: AbortSignal.timeout(HERMES_TIMEOUT_MS),
     body: JSON.stringify({
       // with an explicit provider, Hermes uses this model for the turn (and its own tools still read the vault)
-      ...(config.hermesModel && config.hermesProvider ? { model: config.hermesModel, provider: config.hermesProvider } : { model: "hermes-agent" }),
+      ...(config.hermesModel && config.hermesProvider
+        ? { model: config.hermesModel, provider: config.hermesProvider }
+        : { model: "hermes-agent" }),
       stream: false,
       messages: [
         {
@@ -105,20 +122,41 @@ ${summary}`,
     }),
   });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(`Hermes error ${res.status}: ${body?.error?.message ?? res.statusText}`);
+  if (!res.ok)
+    throw new Error(
+      `Hermes error ${res.status}: ${body?.error?.message ?? res.statusText}`,
+    );
   const choice = body?.choices?.[0];
   const text = String(choice?.message?.content ?? "").trim();
   // "length" = Hermes ran out of steps but still wrote a usable wrap-up
-  if (!text || (choice?.finish_reason && !["stop", "length"].includes(choice.finish_reason)))
-    throw new Error(`Hermes gave no answer (${choice?.finish_reason ?? "empty"})`);
+  if (
+    !text ||
+    (choice?.finish_reason &&
+      !["stop", "length"].includes(choice.finish_reason))
+  )
+    throw new Error(
+      `Hermes gave no answer (${choice?.finish_reason ?? "empty"})`,
+    );
   // runtime = the provider/model that actually served the turn (after any Hermes fallback)
   const served = body?.runtime?.model ?? body?.model ?? "hermes-agent";
-  return { text, source: "hermes", model: modelName(served), ms: Math.round(performance.now() - t0) };
+  return {
+    text,
+    source: "hermes",
+    model: modelName(served),
+    ms: Math.round(performance.now() - t0),
+  };
 }
 
-async function askLocal(question: string, summary: string, language: string): Promise<Answer> {
+async function askLocal(
+  question: string,
+  summary: string,
+  language: string,
+): Promise<Answer> {
   const { text, ms, model } = await chatText([
-    { role: "system", content: `${brief(language)}\n\nSummary of the learner's record:\n${summary}` },
+    {
+      role: "system",
+      content: `${brief(language)}\n\nSummary of the learner's record:\n${summary}`,
+    },
     ...followUps(),
     questionTurn(question, language),
   ]);
@@ -126,21 +164,29 @@ async function askLocal(question: string, summary: string, language: string): Pr
   return { text, source: "local", model: modelName(model), ms };
 }
 
-export async function answerQuestion(question: string, log?: { warn: (msg: string) => void }): Promise<Answer> {
+export async function answerQuestion(
+  question: string,
+  log?: { warn: (msg: string) => void },
+): Promise<Answer> {
   const summary = recordSummary();
   const language = await questionLanguage(question);
   if (config.hermesKey) {
     try {
       return await askHermes(question, summary, language);
     } catch (err) {
-      log?.warn(`Hermes unavailable, answering locally: ${(err as Error).message}`);
+      log?.warn(
+        `Hermes unavailable, answering locally: ${(err as Error).message}`,
+      );
     }
   }
   return askLocal(question, summary, language);
 }
 
 export async function hermesHealth(): Promise<void> {
-  if (!config.hermesKey) throw new Error("HERMES_KEY not set (answering locally)");
-  const r = await fetch(`${config.hermesUrl}/health`, { signal: AbortSignal.timeout(3000) });
+  if (!config.hermesKey)
+    throw new Error("HERMES_KEY not set (answering locally)");
+  const r = await fetch(`${config.hermesUrl}/health`, {
+    signal: AbortSignal.timeout(3000),
+  });
   if (!r.ok) throw new Error(`status ${r.status}`);
 }
