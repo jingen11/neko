@@ -32,86 +32,114 @@ export interface Correction {
   natural: string; // how a native would say it, or "" if `corrected` is already natural
 }
 
+/**
+ * What the model returns. Field order matters: llama.cpp generates fields in schema order, so the
+ * model writes down what the learner means *before* judging it, and checks each fix against that.
+ * `is_correct` is not asked for — it is worked out from the mistakes that survive.
+ */
+interface RawCorrection {
+  meaning: string;
+  mistakes: (Mistake & { keeps_meaning: boolean })[];
+  corrected: string;
+  natural: string;
+}
+
 const correctionSchema = {
   type: "object",
   properties: {
-    is_correct: { type: "boolean" },
-    corrected: { type: "string" },
+    meaning: { type: "string" },
     mistakes: {
       type: "array",
       items: {
         type: "object",
         properties: {
-          type: {
-            enum: [
-              "particle",
-              "conjugation",
-              "tense",
-              "vocabulary",
-              "word_order",
-              "politeness",
-              "other",
-            ],
-          },
           original: { type: "string" },
           fix: { type: "string" },
+          keeps_meaning: { type: "boolean" },
+          type: {
+            enum: ["particle", "conjugation", "tense", "vocabulary", "word_order", "politeness", "other"],
+          },
           grammar_point: { type: "string" },
           explanation: { type: "string" },
         },
-        required: ["type", "original", "fix", "grammar_point", "explanation"],
+        required: ["original", "fix", "keeps_meaning", "type", "grammar_point", "explanation"],
       },
     },
+    corrected: { type: "string" },
     natural: { type: "string" },
   },
-  required: ["is_correct", "corrected", "mistakes", "natural"],
+  required: ["meaning", "mistakes", "corrected", "natural"],
 };
 
-export function correct(sentence: string, context: ChatMessage[] = []) {
+const teacherPrompt = (known: string[]) => `You are a careful Japanese teacher. A JLPT ${config.level} learner is practising by talking to their pet cat, ねこ. You check each sentence the learner says to the cat. Sentences come from speech recognition.
+
+${SCENE}
+
+Work in this order — the output fields follow it.
+
+1. meaning — In one plain English sentence, say what the learner means, as said to ねこ. Name who does what for whom ("I", "you" = the cat, or someone the learner mentions). Japanese often leaves out the subject and the receiver; fill them in from the scene and the conversation. Read the sentence the way the cat would: as a message to it from its owner.
+
+2. mistakes — Only real grammar or vocabulary errors in what the learner said, judged against that meaning. For each one:
+   - original: the wrong part, exactly as the learner said it. fix: the corrected part.
+   - keeps_meaning: true only if the fixed sentence still means exactly what you wrote in "meaning" — the same people, the same action, the same direction of giving. A fix that changes who something is for, or who does it, is not a correction; set false.
+   - type, grammar_point (2–6 words, e.g. "i-adjective past tense"), explanation (one sentence, max 20 words, simple English, agreeing with the fix).
+   If the sentence has no mistakes, return an empty list. That is the normal case for a sentence that is fine.
+
+3. corrected — the whole sentence with only the fixes above applied, keeping the learner's words. If there are no mistakes, repeat the sentence unchanged.
+
+4. natural — how a native would say it, only if that is quite different from "corrected"; otherwise "".
+
+How giving and receiving verbs work here. They mark direction — who benefits — not politeness:
+- あげる / 〜てあげる: the speaker gives to someone, or does something for them. When the learner gives the cat something or does something for it, this is the correct verb.
+- くれる / 〜てくれる: someone gives to the speaker, or does something for the speaker — for example the cat doing something for the learner.
+- もらう / 〜てもらう: the speaker receives something, told from the receiver's side.
+- Textbooks warn that saying 〜てあげる to the person you are talking to can sound condescending. That warning is about superiors, strangers and polite relationships. It does not apply to an owner talking to their own pet, so it is never a mistake here.
+- Removing a giving verb, or swapping it for another, changes who the action is for. Only flag one that points the wrong way for the people in "meaning".
+
+Not mistakes:
+- missing punctuation, kana-vs-kanji spelling, or other speech-recognition artifacts
+- casual speech, or mixing casual and polite forms
+- particles native speakers also drop in speech
+- anything that is only a style preference${
+  known.length
+    ? `
+
+Naming: these grammar point names are already on record: ${known.join("; ")}. After you have found a mistake, if one of these names describes it, use that name exactly. The list says nothing about whether this sentence has a mistake.`
+    : ""
+}`;
+
+export async function correct(sentence: string, context: ChatMessage[] = []): Promise<{ data: Correction; ms: number }> {
   const recent = context
     .slice(-4)
     .map((m) => `${m.role === "user" ? "Learner (owner)" : "ねこ (cat)"}: ${m.content}`)
     .join("\n");
   // Reusing names lets the vault group repeat mistakes under one grammar note.
-  const known = knownPoints();
-  const reuse = known.length
-    ? `\n- Grammar points already on record: ${known.join("; ")}. When you find a mistake that matches one, use that name exactly. This list is only for naming — it does not mean the sentence has that mistake.`
-    : "";
-  return chatJson<Correction>(
+  const { data: raw, ms } = await chatJson<RawCorrection>(
     [
-      {
-        role: "system",
-        content: `You are a precise Japanese teacher checking a JLPT ${config.level} learner's spoken sentence (transcribed from speech).
-${SCENE}
-Judge the sentence as something said TO the pet, using the conversation for context:
-- Who is who: "I" (implied or explicit) is the learner; "you" (implied or explicit) is the cat. Japanese often drops both, so work out the giver and receiver from this scene and the conversation, not from the words alone.
-- Giving and receiving verbs depend on direction, not on politeness:
-  - あげる / 〜てあげる: the speaker (or their side) gives to, or does something for, someone else. When the learner gives the cat something or does something for it, this is the right verb.
-  - くれる / 〜てくれる: someone else gives to, or does something for, the speaker. Use it when the cat (or anyone) does something for the learner.
-  - もらう / 〜てもらう: the speaker receives from someone, seen from the receiver's side.
-  - A sentence with no giving verb is also fine, but it is a different sentence: it no longer says the action was for the cat. Never drop or swap a giving verb just to make a sentence plainer.
-- The cat is the learner's pet, so the slight "doing you a favour" tone that 〜てあげる can carry towards a superior does not apply. Do not treat it as a politeness mistake.
-- Flag a giving verb only when it points the wrong way for the people involved, for example くれる for something the learner did for the cat.
-- Do not "fix" a sentence by changing who it is for or who does it.
-- Do flag a clear tense mistake given the context.
-Only flag real grammar/vocabulary mistakes. These are NOT mistakes:
-- missing punctuation, kana-vs-kanji spelling (transcription artifacts)
-- casual speech, or mixing casual and polite forms
-- particles that native speakers also drop in speech
-Output rules — keep it short:
-- corrected: the whole sentence with the minimal fix; keep the learner's words.
-- grammar_point: 2–6 words, e.g. "i-adjective past tense", "ni vs de for location".
-- explanation: ONE sentence, max 20 words, simple English. It must agree with your fix.
-- natural: only if a native would say it quite differently; otherwise "".
-- If correct: is_correct=true, mistakes=[].${reuse}`,
-      },
+      { role: "system", content: teacherPrompt(knownPoints()) },
       {
         role: "user",
-        content: `${recent ? `Conversation so far:\n${recent}\n\n` : ""}Check this sentence, said by the learner (owner) to ねこ (cat):\n${sentence}`,
+        content: `${recent ? `Conversation so far:\n${recent}\n\n` : ""}The learner (owner) now says to ねこ (cat):\n${sentence}`,
       },
     ],
     correctionSchema,
-    { temperature: 0.1, maxTokens: 400 },
+    { temperature: 0.1, maxTokens: 500 },
   );
+
+  // A "fix" that changes what the learner meant is not a correction; drop it.
+  const mistakes: Mistake[] = raw.mistakes
+    .filter((m) => m.keeps_meaning && m.original.trim() && m.original !== m.fix)
+    .map(({ keeps_meaning: _, ...m }) => m);
+  const is_correct = mistakes.length === 0;
+  const dropped = mistakes.length < raw.mistakes.length;
+  // If a fix was dropped, the model's own "corrected"/"natural" may still contain it: rebuild from the kept fixes.
+  const corrected = is_correct
+    ? sentence
+    : dropped
+      ? mistakes.reduce((s, m) => s.replace(m.original, m.fix), sentence)
+      : raw.corrected;
+  const natural = dropped ? "" : raw.natural;
+  return { data: { is_correct, corrected, mistakes, natural }, ms };
 }
 
 // ── Pet reply ───────────────────────────────────────────────────────────────
