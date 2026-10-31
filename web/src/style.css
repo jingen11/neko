@@ -117,7 +117,7 @@ h1 { font: 500 var(--fs-title)/1.15 var(--serif); letter-spacing: -0.01em; }
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .meta { font-size: var(--fs-small); color: var(--muted); }
 .stage-panel, .chat-panel { grid-column: span 6; height: 540px; }
-.review, .debug { grid-column: span 12; }
+.review, .debug, .challenge { grid-column: span 12; }
 
 /* the cat: PixiJS draws the GIFs crisp on a transparent canvas over the tatami-green room */
 .stage-panel { background: var(--stage); display: flex; flex-direction: column; padding: var(--pad); }
@@ -196,6 +196,22 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
 .review-list .n { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
 .review-list .eg { margin-top: 4px; }
 
+/* translation challenge: the task on the left, the score on the right */
+.ch-body { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 24px; }
+.zh { font: 500 26px/38px "PingFang SC", "Noto Sans SC", "Microsoft YaHei", var(--sans); }
+.zh.skel { font-size: 18px; line-height: 28px; }
+.ch-hint { display: flex; align-items: center; gap: 8px; min-height: 28px; margin: 10px 0 12px; color: var(--muted); }
+.ch-hint b { color: var(--text); font-weight: 600; }
+.ch-result { min-width: 0; }
+.ch-score { display: flex; align-items: center; gap: 12px; }
+.ch-score .kpi-value { margin: 0; }
+.ch-parts { display: grid; gap: 8px; margin-top: 10px; }
+.ch-part-top { display: flex; justify-content: space-between; font-size: var(--fs-small); color: var(--muted); }
+.ch-part-top .num { color: var(--text); font-weight: 500; }
+.ch-part .track { margin-top: 4px; }
+.ch-comment { margin-top: 12px; }
+.ch-result .check { margin-top: 10px; }
+
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 14px; background: var(--primary); color: var(--on-primary); box-shadow: 0 6px 20px rgb(0 0 0 / .18); z-index: 10; }
 
 /* ---------- tablet ---------- */
@@ -206,6 +222,7 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
   #chat { max-height: 56vh; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ch-body { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---------- phone ---------- */
@@ -223,6 +240,7 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
   .keys { display: none; }
   .composer .talk { flex: 1; height: 48px; }
   .composer #send, .composer #askBtn { height: 48px; }
+  .zh { font-size: 22px; line-height: 32px; }
   .review-list { grid-template-columns: minmax(0, 1fr); }
 }
 

@@ -76,6 +76,24 @@
       </div>
     </section>
 
+    <section class="panel challenge" aria-labelledby="chTitle">
+      <div class="head"><h2 id="chTitle">Translate into Japanese</h2><span id="chMeta" class="meta">Today's challenge</span></div>
+      <div class="ch-body">
+        <div class="ch-task">
+          <p id="chZh" class="zh skel" lang="zh-CN">正在准备今天的句子…</p>
+          <p class="ch-hint"><button id="chHintBtn" class="chip-btn" type="button" aria-pressed="false" disabled>Hint</button><span id="chHint" hidden></span></p>
+          <label for="chAnswer" class="sr">Your Japanese translation</label>
+          <textarea id="chAnswer" lang="ja" rows="2" placeholder="日本語で…" disabled></textarea>
+          <div class="actions">
+            <button id="chCheck" class="btn primary" type="button" disabled>Check</button>
+            <button id="chNew" class="btn" type="button">New challenge</button>
+            <span class="keys"><kbd>Enter</kbd> check</span>
+          </div>
+        </div>
+        <div id="chResult" class="ch-result" aria-live="polite"><p class="empty">Your score appears here: meaning, grammar and naturalness.</p></div>
+      </div>
+    </section>
+
     <section class="panel review">
       <div class="head"><h2>To review</h2><span class="meta">From this visit's corrections · ask about any point</span></div>
       <ul id="review" class="review-list"></ul>
