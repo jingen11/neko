@@ -5,13 +5,17 @@ import { knownPoints } from "./records.ts";
 /** Who is talking to whom — both prompts need this to read giving/receiving verbs and "you" correctly. */
 const SCENE = `Scene: the learner is the owner of a pet cat named ねこ and is speaking directly to the cat. The learner feeds, pets and cares for ねこ; ねこ replies as the cat.`;
 
-/** Who is talking to whom — both prompts need this to read giving/receiving verbs and "you" correctly. */
-const SCENE = `Scene: the learner is the owner of a pet cat named ねこ and is speaking directly to the cat. The learner feeds, pets and cares for ねこ; ねこ replies as the cat.`;
-
 // ── Grammar correction ──────────────────────────────────────────────────────
 
 export interface Mistake {
-  type: "particle" | "conjugation" | "tense" | "vocabulary" | "word_order" | "politeness" | "other";
+  type:
+    | "particle"
+    | "conjugation"
+    | "tense"
+    | "vocabulary"
+    | "word_order"
+    | "politeness"
+    | "other";
   original: string; // the wrong part, as the learner said it
   fix: string; // the corrected part
   grammar_point: string; // short name, e.g. "に vs を with 行く"
@@ -35,7 +39,17 @@ const correctionSchema = {
       items: {
         type: "object",
         properties: {
-          type: { enum: ["particle", "conjugation", "tense", "vocabulary", "word_order", "politeness", "other"] },
+          type: {
+            enum: [
+              "particle",
+              "conjugation",
+              "tense",
+              "vocabulary",
+              "word_order",
+              "politeness",
+              "other",
+            ],
+          },
           original: { type: "string" },
           fix: { type: "string" },
           grammar_point: { type: "string" },
@@ -56,7 +70,9 @@ export function correct(sentence: string, context: ChatMessage[] = []) {
     .join("\n");
   // Reusing names lets the vault group repeat mistakes under one grammar note.
   const known = knownPoints();
-  const reuse = known.length ? `\n- Grammar points already on record: ${known.join("; ")}. If one fits, use that name exactly.` : "";
+  const reuse = known.length
+    ? `\n- Grammar points already on record: ${known.join("; ")}. If one fits, use that name exactly.`
+    : "";
   return chatJson<Correction>(
     [
       {
@@ -78,7 +94,10 @@ Output rules — keep it short:
 - natural: only if a native would say it quite differently; otherwise "".
 - If correct: is_correct=true, mistakes=[].${reuse}`,
       },
-      { role: "user", content: `${recent ? `Conversation so far:\n${recent}\n\n` : ""}Check this sentence:\n${sentence}` },
+      {
+        role: "user",
+        content: `${recent ? `Conversation so far:\n${recent}\n\n` : ""}Check this sentence:\n${sentence}`,
+      },
     ],
     correctionSchema,
     { temperature: 0.1, maxTokens: 400 },
