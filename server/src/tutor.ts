@@ -3,7 +3,10 @@ import { chatJson, type ChatMessage } from "./llm.ts";
 import { knownPoints } from "./records.ts";
 
 /** Who is talking to whom — both prompts need this to read giving/receiving verbs and "you" correctly. */
-const SCENE = `Scene: the learner is the owner of a pet cat named ねこ and is speaking directly to the cat. The learner feeds, pets and cares for ねこ; ねこ replies as the cat.`;
+const SCENE = `Scene: a conversation between exactly two parties, who never change.
+- Every user message is always the learner: the owner of a pet cat named ねこ, speaking directly to the cat. The learner feeds, pets and cares for ねこ.
+- Every assistant message is always ねこ, the cat, played by the model. ねこ speaks only to the learner.
+No one else speaks, though the learner may talk about other people.`;
 
 // ── Grammar correction ──────────────────────────────────────────────────────
 
@@ -66,12 +69,12 @@ const correctionSchema = {
 export function correct(sentence: string, context: ChatMessage[] = []) {
   const recent = context
     .slice(-4)
-    .map((m) => `${m.role === "user" ? "Learner" : "Pet"}: ${m.content}`)
+    .map((m) => `${m.role === "user" ? "Learner (owner)" : "ねこ (cat)"}: ${m.content}`)
     .join("\n");
   // Reusing names lets the vault group repeat mistakes under one grammar note.
   const known = knownPoints();
   const reuse = known.length
-    ? `\n- Grammar points already on record: ${known.join("; ")}. If one fits, use that name exactly.`
+    ? `\n- Grammar points already on record: ${known.join("; ")}. When you find a mistake that matches one, use that name exactly. This list is only for naming — it does not mean the sentence has that mistake.`
     : "";
   return chatJson<Correction>(
     [
@@ -80,9 +83,16 @@ export function correct(sentence: string, context: ChatMessage[] = []) {
         content: `You are a precise Japanese teacher checking a JLPT ${config.level} learner's spoken sentence (transcribed from speech).
 ${SCENE}
 Judge the sentence as something said TO the pet, using the conversation for context:
-- "you" (implied or explicit) is the pet; giving/doing things for the listener (〜てあげる, あげる) is correct here.
+- Who is who: "I" (implied or explicit) is the learner; "you" (implied or explicit) is the cat. Japanese often drops both, so work out the giver and receiver from this scene and the conversation, not from the words alone.
+- Giving and receiving verbs depend on direction, not on politeness:
+  - あげる / 〜てあげる: the speaker (or their side) gives to, or does something for, someone else. When the learner gives the cat something or does something for it, this is the right verb.
+  - くれる / 〜てくれる: someone else gives to, or does something for, the speaker. Use it when the cat (or anyone) does something for the learner.
+  - もらう / 〜てもらう: the speaker receives from someone, seen from the receiver's side.
+  - A sentence with no giving verb is also fine, but it is a different sentence: it no longer says the action was for the cat. Never drop or swap a giving verb just to make a sentence plainer.
+- The cat is the learner's pet, so the slight "doing you a favour" tone that 〜てあげる can carry towards a superior does not apply. Do not treat it as a politeness mistake.
+- Flag a giving verb only when it points the wrong way for the people involved, for example くれる for something the learner did for the cat.
 - Do not "fix" a sentence by changing who it is for or who does it.
-- Do flag tense, giving/receiving direction (あげる/くれる/もらう) or vocabulary that clearly clashes with the context.
+- Do flag a clear tense mistake given the context.
 Only flag real grammar/vocabulary mistakes. These are NOT mistakes:
 - missing punctuation, kana-vs-kanji spelling (transcription artifacts)
 - casual speech, or mixing casual and polite forms
@@ -96,7 +106,7 @@ Output rules — keep it short:
       },
       {
         role: "user",
-        content: `${recent ? `Conversation so far:\n${recent}\n\n` : ""}Check this sentence:\n${sentence}`,
+        content: `${recent ? `Conversation so far:\n${recent}\n\n` : ""}Check this sentence, said by the learner (owner) to ねこ (cat):\n${sentence}`,
       },
     ],
     correctionSchema,
@@ -130,7 +140,7 @@ export function petReply(history: ChatMessage[]) {
         role: "system",
         content: `You are ねこ, a small cheerful cat who lives in a box and is the user's Japanese conversation buddy.
 ${SCENE}
-- The user is talking to you. When they give, buy, make or do something "for you" (〜てあげる, あげる), it is for YOU — react as the cat receiving it (e.g. thank them with 〜てくれる / ありがとう).
+- You are ねこ. Every user message is your owner talking to you. When they give, buy, make or do something "for you" (〜てあげる, あげる), it is for YOU — react as the cat receiving it (e.g. thank them with 〜てくれる / ありがとう).
 - Speak only natural Japanese at JLPT ${config.level} level: ${config.level} vocabulary and grammar, at most one slightly harder word.
 - Keep each reply short: 1–2 short sentences, then a simple question to keep the conversation going.
 - "ja" is only ねこ's own spoken words, said once: no speaker names (like ねこ：), no quotation marks, no line breaks, no repeats.
