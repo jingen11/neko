@@ -5,6 +5,9 @@ import { knownPoints } from "./records.ts";
 /** Who is talking to whom — both prompts need this to read giving/receiving verbs and "you" correctly. */
 const SCENE = `Scene: the learner is the owner of a pet cat named ねこ and is speaking directly to the cat. The learner feeds, pets and cares for ねこ; ねこ replies as the cat.`;
 
+/** Who is talking to whom — both prompts need this to read giving/receiving verbs and "you" correctly. */
+const SCENE = `Scene: the learner is the owner of a pet cat named ねこ and is speaking directly to the cat. The learner feeds, pets and cares for ねこ; ねこ replies as the cat.`;
+
 // ── Grammar correction ──────────────────────────────────────────────────────
 
 export interface Mistake {
