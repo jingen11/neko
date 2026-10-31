@@ -157,3 +157,34 @@ export interface ErrorMsg {
 }
 
 export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | AnswerMsg | ErrorMsg;
+
+// ── translation challenge (HTTP, not the WebSocket) ──────────────────────────
+//   GET  /api/challenge              → ChallengeState   today's current challenge (the daily one is made on first request)
+//   POST /api/challenge/new          → ChallengeState   a fresh on-demand challenge
+//   POST /api/challenge/:id/answer   {text} → ChallengeResult
+
+export interface Challenge {
+  id: number;
+  kind: "daily" | "extra";
+  day: string; // YYYY-MM-DD in the learner's time zone
+  zh: string; // the sentence to translate, Simplified Chinese
+  topic: string;
+  grammar: string; // the grammar point the reference answer uses (shown as a hint)
+}
+
+export interface ChallengeResult {
+  answer: string;
+  total: number; // 0..100 = meaning + grammar + naturalness
+  meaning: number; // 0..50
+  grammar: number; // 0..30
+  naturalness: number; // 0..20
+  corrected: string; // the learner's answer with the fixes applied
+  mistakes: (CorrectionMistake & { type: string })[];
+  comment: string;
+  reference: string; // one good Japanese translation (revealed after an attempt)
+}
+
+export interface ChallengeState {
+  challenge: Challenge;
+  last: ChallengeResult | null; // the latest attempt at this challenge, if any
+}

@@ -5,6 +5,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { hermesHealth } from "./ask.ts";
 import { padSilence } from "./audio.ts";
+import * as challenge from "./challenge.ts";
 import { config } from "./config.ts";
 import { attach } from "./hub.ts";
 import type { ChatMessage } from "./llm.ts";
@@ -58,6 +59,15 @@ app.post<TurnBody>("/api/correct", async (req, reply) => {
   const c = await correct(text, cleanHistory(req.body.history));
   req.log.info(`correct ${c.ms}ms`);
   return { ...c.data, ms: c.ms };
+});
+
+// ── translation challenge (see shared/protocol.ts) ──
+app.get("/api/challenge", () => challenge.current());
+app.post("/api/challenge/new", () => challenge.fresh());
+app.post<{ Params: { id: string }; Body: { text?: string } }>("/api/challenge/:id/answer", async (req) => {
+  const r = await challenge.grade(Number(req.params.id), String(req.body?.text ?? ""));
+  req.log.info(`challenge #${req.params.id} scored ${r.total}`);
+  return r;
 });
 
 // ── voice test: read sentences with deliberate mistakes; does STT keep them? ──
@@ -115,6 +125,11 @@ app.get("/api/health", async () => {
 });
 
 await app.listen({ host: config.host, port: config.port });
+
+// Make today's challenge ahead of time so the card loads at once; check again every half hour for a new day.
+const makeDaily = () => challenge.ensureDaily().catch((err) => app.log.warn(`daily challenge not ready: ${(err as Error).message}`));
+makeDaily();
+setInterval(makeDaily, 30 * 60_000).unref();
 
 // Notes are rendered from the database, so rebuilding brings the vault up to date after code changes.
 if (config.vaultDir)

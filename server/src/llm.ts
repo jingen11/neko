@@ -9,7 +9,17 @@ export interface ChatMessage {
  * Call llama.cpp and get back JSON matching `schema`.
  * Thinking is turned off: pet replies and corrections need to be fast.
  */
-export async function chatJson<T>(messages: ChatMessage[], schema: object, opts: { temperature?: number; maxTokens?: number } = {}): Promise<{ data: T; ms: number }> {
+/** Sampling options. top_k / top_p / min_p / seed are passed to llama.cpp only when set. */
+export interface SampleOpts {
+  temperature?: number;
+  maxTokens?: number;
+  topK?: number;
+  topP?: number;
+  minP?: number;
+  seed?: number;
+}
+
+export async function chatJson<T>(messages: ChatMessage[], schema: object, opts: SampleOpts = {}): Promise<{ data: T; ms: number }> {
   const t0 = performance.now();
   const res = await fetch(`${config.llamaUrl}/v1/chat/completions`, {
     method: "POST",
@@ -18,6 +28,10 @@ export async function chatJson<T>(messages: ChatMessage[], schema: object, opts:
       messages,
       temperature: opts.temperature ?? 0.7,
       max_tokens: opts.maxTokens ?? 800,
+      ...(opts.topK !== undefined && { top_k: opts.topK }),
+      ...(opts.topP !== undefined && { top_p: opts.topP }),
+      ...(opts.minP !== undefined && { min_p: opts.minP }),
+      ...(opts.seed !== undefined && { seed: opts.seed }),
       response_format: { type: "json_schema", json_schema: { schema } },
       chat_template_kwargs: { enable_thinking: false },
     }),

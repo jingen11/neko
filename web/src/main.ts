@@ -1,6 +1,7 @@
 import { Application } from "pixi.js";
 import type { AnswerMsg, Anim, CorrectionMsg, Mood, PetStats, ServerMessage } from "../../shared/protocol.ts";
 import { AudioIO } from "./audio.ts";
+import { initChallenge } from "./challenge.ts";
 import { Net } from "./net.ts";
 import { Pet } from "./pet.ts";
 import "./style.css";
@@ -212,8 +213,8 @@ talkBtn.addEventListener("pointerdown", (e) => {
   startTalk();
 });
 for (const ev of ["pointerup", "pointerleave", "pointercancel"]) talkBtn.addEventListener(ev, stopTalk);
-// Space anywhere but the text box or a button holds to talk
-const ownsSpace = (t: EventTarget | null) => t instanceof HTMLElement && (t === textEl || t.tagName === "BUTTON");
+// Space anywhere but a text box or a button holds to talk
+const ownsSpace = (t: EventTarget | null) => t instanceof HTMLElement && ["TEXTAREA", "INPUT", "BUTTON"].includes(t.tagName);
 document.addEventListener("keydown", (e) => {
   if (e.code === "Space" && !ownsSpace(e.target) && !e.repeat) {
     e.preventDefault();
@@ -435,6 +436,9 @@ function markdown(src: string): string {
 function esc(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
+
+// The translation challenge card works over HTTP, so it loads before the cat is woken.
+initChallenge(demo, toast);
 
 // ?demo fills the screen with sample messages, for looking at the design without the server.
 if (demo) import("./demo.ts").then((d) => d.run(onMessage, setAwake, (t) => (lastUserEntry = userEntry(t)), ask));
