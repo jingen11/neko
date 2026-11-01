@@ -109,6 +109,27 @@ export const pointKey = (p: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// The teacher isn't shown the saved names (it pushed it to repeat past wrong fixes), so it may word
+// a known point differently. Fold a new name into a saved one of the same kind when they share
+// nearly all their words, in any order; otherwise it starts a new point.
+const FILLER = new Set(["vs", "versus", "and", "or", "of", "the", "a", "an", "with", "for", "in", "use", "usage", "form"]);
+const words = (key: string) => new Set(key.split(" ").filter((w) => w && !FILLER.has(w)));
+
+function matchKey(key: string, kind: string): string {
+  const saved = db.prepare("SELECT DISTINCT point_key FROM mistakes WHERE kind = ?").all(kind) as { point_key: string }[];
+  if (saved.some((r) => r.point_key === key)) return key;
+  const mine = words(key);
+  if (mine.size < 2) return key;
+  let best = { key, score: 0 };
+  for (const { point_key } of saved) {
+    const theirs = words(point_key);
+    const shared = [...mine].filter((w) => theirs.has(w)).length;
+    const score = shared / (mine.size + theirs.size - shared);
+    if (shared >= 2 && score >= 0.75 && score > best.score) best = { key: point_key, score };
+  }
+  return best.key;
+}
+
 // ── writing records ─────────────────────────────────────────────────────────
 
 /** Record a practised sentence and its mistakes; returns the turn's id. */
@@ -124,7 +145,7 @@ export function logTurn(said: string, c: Correction, reply?: { ja: string; en: s
   const keys = new Set<string>();
   for (const m of c.mistakes) {
     const point = m.grammar_point.trim() || "other";
-    const key = pointKey(point);
+    const key = matchKey(pointKey(point), m.type);
     keys.add(key);
     // reuse the first name seen for this point so the vault note keeps one title
     insert.run(lastInsertRowid, at, day, m.type, m.original, m.fix, pointName(key) ?? point, key, m.explanation);
