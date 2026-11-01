@@ -18,31 +18,7 @@ import type { Mistake } from "./tutor.ts";
  * once made, so it stays the same all day. On-demand challenges get a fresh random seed.
  */
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS challenges (
-    id INTEGER PRIMARY KEY,
-    at INTEGER NOT NULL,
-    day TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    seed INTEGER NOT NULL,
-    topic TEXT NOT NULL,
-    grammar TEXT NOT NULL,
-    style TEXT NOT NULL,
-    zh TEXT NOT NULL,
-    ja TEXT NOT NULL
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS challenges_daily ON challenges(day) WHERE kind = 'daily';
-  CREATE TABLE IF NOT EXISTS challenge_attempts (
-    id INTEGER PRIMARY KEY,
-    challenge_id INTEGER NOT NULL REFERENCES challenges(id),
-    at INTEGER NOT NULL,
-    day TEXT NOT NULL,
-    answer TEXT NOT NULL,
-    total INTEGER NOT NULL,
-    result TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS challenge_attempts_challenge ON challenge_attempts(challenge_id);
-`);
+// Tables live in records.ts with the other learning records (the vault notes read them too).
 
 // ── what a challenge can be about ───────────────────────────────────────────
 
@@ -207,6 +183,7 @@ async function create(kind: "daily" | "extra", day: string, baseSeed: number): P
       const { lastInsertRowid } = db
         .prepare("INSERT INTO challenges (at, day, kind, seed, topic, grammar, style, zh, ja) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(Date.now(), day, kind, seed, brief.topic, brief.grammar, style, s.zh, s.ja);
+      records.noteChanged(day);
       return { id: Number(lastInsertRowid), kind, day, zh: s.zh, topic: brief.topic, grammar: brief.grammar };
     } catch (err) {
       lastErr = err;
@@ -359,20 +336,23 @@ export async function grade(id: number, answer: string): Promise<ChallengeResult
   };
   result.total = result.meaning + result.grammar + result.naturalness;
 
+  // Grammar mistakes join the learning record (review list, grammar notes, future weak-point challenges),
+  // and a translated sentence counts as practice, so it feeds the cat like a spoken one.
+  const grammarMistakes = mistakes.filter((m) => GRAMMAR_KINDS.has(m.type)) as Mistake[];
+  const turnId = records.logTurn(answer, { is_correct: grammarMistakes.length === 0, corrected: result.corrected, mistakes: grammarMistakes, natural: "" });
+  pet.recordPractice(answer, grammarMistakes.length === 0, grammarMistakes.length);
+
+  // The whole attempt (every mistake, scores, comment) is kept here and written to the daily note.
   const at = Date.now();
-  db.prepare("INSERT INTO challenge_attempts (challenge_id, at, day, answer, total, result) VALUES (?, ?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO challenge_attempts (challenge_id, turn_id, at, day, answer, total, result) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     id,
+    turnId,
     at,
     localDay(at),
     answer,
     result.total,
     JSON.stringify(result),
   );
-
-  // Grammar mistakes join the learning record (review list, vault, future weak-point challenges),
-  // and a translated sentence counts as practice, so it feeds the cat like a spoken one.
-  const grammarMistakes = mistakes.filter((m) => GRAMMAR_KINDS.has(m.type)) as Mistake[];
-  records.logTurn(answer, { is_correct: grammarMistakes.length === 0, corrected: result.corrected, mistakes: grammarMistakes, natural: "" });
-  pet.recordPractice(answer, grammarMistakes.length === 0, grammarMistakes.length);
+  records.noteChanged(localDay(at));
   return result;
 }
