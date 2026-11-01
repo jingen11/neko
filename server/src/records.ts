@@ -3,6 +3,7 @@ import path from "node:path";
 import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { localDay } from "./pet.ts";
+import type { ChallengeResult } from "../../shared/protocol.ts";
 import type { Correction } from "./tutor.ts";
 
 /**
@@ -10,7 +11,7 @@ import type { Correction } from "./tutor.ts";
  * and the vault notes are rendered from it (so they can always be rebuilt):
  *
  *   <vault>/Japanese/Index.md            totals, weakest grammar points, recent days
- *   <vault>/Japanese/Daily/<date>.md     everything practised that day
+ *   <vault>/Japanese/Daily/<date>.md     everything practised that day, translation challenges included
  *   <vault>/Japanese/Grammar/<point>.md  every mistake on one grammar point
  *
  * neko owns these files and overwrites them. Hermes writes its own notes elsewhere (Japanese/Notes/).
@@ -58,7 +59,46 @@ db.exec(`
     source TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS asks_day ON asks(day);
+  -- translation challenges (written by challenge.ts)
+  CREATE TABLE IF NOT EXISTS challenges (
+    id INTEGER PRIMARY KEY,
+    at INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    grammar TEXT NOT NULL,
+    style TEXT NOT NULL,
+    zh TEXT NOT NULL,
+    ja TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS challenges_daily ON challenges(day) WHERE kind = 'daily';
+  CREATE INDEX IF NOT EXISTS challenges_day ON challenges(day);
+  CREATE TABLE IF NOT EXISTS challenge_attempts (
+    id INTEGER PRIMARY KEY,
+    challenge_id INTEGER NOT NULL REFERENCES challenges(id),
+    turn_id INTEGER REFERENCES turns(id), -- the turn holding this answer's grammar mistakes
+    at INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    total INTEGER NOT NULL,
+    result TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS challenge_attempts_challenge ON challenge_attempts(challenge_id);
 `);
+
+// Attempts saved before turn_id existed: add the column and link each to the turn logged with it
+// (same answer, a moment apart), so translations stop showing up as spoken sentences.
+if (!(db.prepare("PRAGMA table_info(challenge_attempts)").all() as { name: string }[]).some((c) => c.name === "turn_id")) {
+  db.exec("ALTER TABLE challenge_attempts ADD COLUMN turn_id INTEGER REFERENCES turns(id)");
+  const find = db.prepare("SELECT id FROM turns WHERE said = ? AND at BETWEEN ? AND ? ORDER BY ABS(at - ?) LIMIT 1");
+  const link = db.prepare("UPDATE challenge_attempts SET turn_id = ? WHERE id = ?");
+  for (const a of db.prepare("SELECT id, at, answer FROM challenge_attempts").all() as { id: number; at: number; answer: string }[]) {
+    const t = find.get(a.answer, a.at - 10_000, a.at + 10_000, a.at) as { id: number } | undefined;
+    if (t) link.run(t.id, a.id);
+  }
+}
+db.exec("CREATE INDEX IF NOT EXISTS challenge_attempts_turn ON challenge_attempts(turn_id)");
 
 /** Grammar point names from the model vary a little ("Ni vs de." / "ni vs de"); this groups them. */
 export const pointKey = (p: string) =>
@@ -71,7 +111,8 @@ export const pointKey = (p: string) =>
 
 // ── writing records ─────────────────────────────────────────────────────────
 
-export function logTurn(said: string, c: Correction, reply?: { ja: string; en: string }) {
+/** Record a practised sentence and its mistakes; returns the turn's id. */
+export function logTurn(said: string, c: Correction, reply?: { ja: string; en: string }): number {
   const at = Date.now();
   const day = localDay(at);
   const { lastInsertRowid } = db
@@ -89,6 +130,12 @@ export function logTurn(said: string, c: Correction, reply?: { ja: string; en: s
     insert.run(lastInsertRowid, at, day, m.type, m.original, m.fix, pointName(key) ?? point, key, m.explanation);
   }
   queueWrite(day, keys);
+  return Number(lastInsertRowid);
+}
+
+/** Something on `day` changed outside this module (a translation challenge): rewrite that day's note. */
+export function noteChanged(day: string) {
+  queueWrite(day);
 }
 
 export type ListeningKind = "repeat" | "slow" | "english";
@@ -187,7 +234,7 @@ const fileName = (p: string) => p.replace(/[\\/:*?"<>|#^[\]]/g, " ").replace(/\s
 /** Links use the folder's own name ("Japanese/...") so they resolve from anywhere in the vault. */
 const ns = () => path.basename(config.vaultDir);
 const grammarLink = (point: string, sep = "|") => `[[${ns()}/Grammar/${fileName(point)}${sep}${point}]]`;
-const dayLink = (day: string) => `[[${ns()}/Daily/${day}|${day}]]`;
+const dayLink = (day: string, sep = "|") => `[[${ns()}/Daily/${day}${sep}${day}]]`;
 const oneLine = (s: string) => s.replace(/\s*\n\s*/g, " ").trim();
 const quote = (s: string) => s.trim().split("\n").map((l) => `> ${l}`).join("\n");
 
@@ -234,7 +281,7 @@ async function writeNotes(days: Set<string>, points: Set<string>) {
 
 /** Rebuild every note from the database. */
 export async function rebuildVault() {
-  const days = (db.prepare("SELECT day FROM turns UNION SELECT day FROM listening UNION SELECT day FROM asks").all() as { day: string }[]).map((r) => r.day);
+  const days = (db.prepare("SELECT day FROM turns UNION SELECT day FROM listening UNION SELECT day FROM asks UNION SELECT day FROM challenges").all() as { day: string }[]).map((r) => r.day);
   const points = (db.prepare("SELECT DISTINCT point_key FROM mistakes").all() as { point_key: string }[]).map((r) => r.point_key);
   await writeNotes(new Set(days), new Set(points));
 }
@@ -260,8 +307,67 @@ interface MistakeRow {
   explanation: string;
 }
 
+interface ChallengeRow {
+  id: number;
+  at: number;
+  day: string;
+  kind: "daily" | "extra";
+  topic: string;
+  grammar: string;
+  style: string;
+  zh: string;
+  ja: string;
+}
+interface AttemptRow {
+  challenge_id: number;
+  at: number;
+  day: string;
+  total: number;
+  result: string;
+}
+
+/** One translation challenge and every attempt at it, for the daily note. */
+function challengeLines(c: ChallengeRow, attempts: AttemptRow[]): string[] {
+  const out = [
+    `### ${hhmm(c.at)} ${c.kind === "daily" ? "Daily challenge" : "Extra challenge"}` + (attempts.length ? ` · best ${Math.max(...attempts.map((a) => a.total))}/100` : ""),
+    `- Chinese: ${oneLine(c.zh)}`,
+    `- Reference: ${oneLine(c.ja)}`,
+    `- Brief: ${c.topic} · ${c.grammar} · ${c.style}` + (c.day !== attempts[0]?.day && attempts.length ? ` · set on ${dayLink(c.day)}` : ""),
+  ];
+  if (!attempts.length) out.push("- Not attempted.");
+  attempts.forEach((a, i) => {
+    const r = JSON.parse(a.result) as ChallengeResult;
+    out.push(
+      "",
+      `#### Attempt ${i + 1} · ${hhmm(a.at)}${a.day !== c.day ? ` (${a.day})` : ""} · ${r.total}/100`,
+      `- Answer: ${oneLine(r.answer)}`,
+      `- Score: meaning ${r.meaning}/50 · grammar ${r.grammar}/30 · naturalness ${r.naturalness}/20`,
+    );
+    if (r.mistakes.length) out.push(`- Corrected: ${oneLine(r.corrected)}`);
+    for (const m of r.mistakes) {
+      // grammar mistakes link to their grammar note; meaning slips are about this sentence only
+      const point = m.type === "meaning" || m.type === "omission" ? m.grammar_point : grammarLink(pointName(pointKey(m.grammar_point)) ?? m.grammar_point);
+      out.push(`- Mistake (${m.type}): ${oneLine(m.original)} → ${oneLine(m.fix)} · ${point} · ${oneLine(m.explanation)}`);
+    }
+    if (!r.mistakes.length) out.push("- No mistakes.");
+    if (r.comment) out.push(`- Comment: ${oneLine(r.comment)}`);
+  });
+  out.push("");
+  return out;
+}
+
 function dailyNote(day: string): string {
-  const turns = db.prepare("SELECT * FROM turns WHERE day = ? ORDER BY at").all(day) as unknown as TurnRow[];
+  // Translation answers are turns too (for their grammar mistakes) but get their own section below.
+  const turns = db
+    .prepare("SELECT * FROM turns WHERE day = ? AND id NOT IN (SELECT turn_id FROM challenge_attempts WHERE turn_id IS NOT NULL) ORDER BY at")
+    .all(day) as unknown as TurnRow[];
+  const challenges = db.prepare("SELECT * FROM challenges WHERE day = ? ORDER BY at").all(day) as unknown as ChallengeRow[];
+  const attempts = db
+    .prepare("SELECT a.* FROM challenge_attempts a JOIN challenges c ON c.id = a.challenge_id WHERE c.day = ? OR a.day = ? ORDER BY a.at")
+    .all(day, day) as unknown as AttemptRow[];
+  // a challenge from an earlier day attempted today still belongs in today's note
+  for (const id of new Set(attempts.map((a) => a.challenge_id)))
+    if (!challenges.some((c) => c.id === id)) challenges.push(db.prepare("SELECT * FROM challenges WHERE id = ?").get(id) as unknown as ChallengeRow);
   const mistakes = db.prepare("SELECT * FROM mistakes WHERE day = ? ORDER BY at").all(day) as unknown as MistakeRow[];
   const listening = db.prepare("SELECT * FROM listening WHERE day = ? ORDER BY at").all(day) as unknown as { at: number; kind: ListeningKind; ja: string; en: string }[];
   const asks = db.prepare("SELECT * FROM asks WHERE day = ? ORDER BY at").all(day) as unknown as { at: number; question: string; answer: string; source: string }[];
@@ -277,13 +383,18 @@ function dailyNote(day: string): string {
     `mistakes: ${mistakes.length}`,
     `listening_misses: ${listening.length}`,
     `questions: ${asks.length}`,
+    `translations: ${attempts.length}`,
+    ...(attempts.length ? [`best_translation_score: ${Math.max(...attempts.map((a) => a.total))}`] : []),
     "tags: [neko, japanese/daily]",
     "---",
     `# Japanese practice ${day}`,
     "",
     `${OWNED} See [[${ns()}/Index|Index]] for the overall picture.`,
     "",
-    `**${turns.length} ${turns.length === 1 ? "sentence" : "sentences"}**, ${correct} correct, ${mistakes.length} ${mistakes.length === 1 ? "mistake" : "mistakes"}.` + (points.length ? ` Points: ${points.map((p) => grammarLink(p)).join(", ")}.` : ""),
+    `**${turns.length} ${turns.length === 1 ? "sentence" : "sentences"}** spoken, ${correct} correct` +
+      (attempts.length ? `; **${attempts.length} ${attempts.length === 1 ? "translation" : "translations"}**, best ${Math.max(...attempts.map((a) => a.total))}/100` : "") +
+      `; ${mistakes.length} grammar ${mistakes.length === 1 ? "mistake" : "mistakes"}.` +
+      (points.length ? ` Points: ${points.map((p) => grammarLink(p)).join(", ")}.` : ""),
     "",
   ];
 
@@ -300,6 +411,11 @@ function dailyNote(day: string): string {
     }
   }
 
+  if (challenges.length) {
+    out.push("## Translation", "", "Chinese → Japanese challenges, with every attempt.", "");
+    for (const c of challenges) out.push(...challengeLines(c, attempts.filter((a) => a.challenge_id === c.id)));
+  }
+
   if (listening.length) {
     const what = { repeat: "Asked to hear again", slow: "Asked to hear slowly", english: "Looked at the English" };
     out.push("## Listening", "", "Lines the learner needed help to understand.", "");
@@ -314,13 +430,18 @@ function dailyNote(day: string): string {
   return out.join("\n");
 }
 
+/** SQL condition: a turn that was spoken (or typed) to the cat, not a translation answer. */
+const SPOKEN = "id NOT IN (SELECT turn_id FROM challenge_attempts WHERE turn_id IS NOT NULL)";
+
 function grammarNote(key: string): { point: string; body: string } | null {
   const rows = db
     .prepare(
-      `SELECT m.*, t.said, t.corrected FROM mistakes m JOIN turns t ON t.id = m.turn_id
+      `SELECT m.*, t.said, t.corrected, c.zh FROM mistakes m JOIN turns t ON t.id = m.turn_id
+       LEFT JOIN challenge_attempts a ON a.turn_id = t.id
+       LEFT JOIN challenges c ON c.id = a.challenge_id
        WHERE m.point_key = ? ORDER BY m.at DESC`,
     )
-    .all(key) as unknown as (MistakeRow & { said: string; corrected: string })[];
+    .all(key) as unknown as (MistakeRow & { said: string; corrected: string; zh: string | null })[];
   if (!rows.length) return null;
   const point = rows[rows.length - 1].point;
   const kinds = [...new Set(rows.map((r) => r.kind))];
@@ -341,7 +462,7 @@ function grammarNote(key: string): { point: string; body: string } | null {
   for (const r of rows) {
     out.push(
       `- ${r.day} ${hhmm(r.at)} · ${oneLine(r.original)} → ${oneLine(r.fix)} · ${dayLink(r.day)}`,
-      `  - Said: ${oneLine(r.said)}`,
+      ...(r.zh ? [`  - Translating: ${oneLine(r.zh)}`, `  - Wrote: ${oneLine(r.said)}`] : [`  - Said: ${oneLine(r.said)}`]),
       `  - Fixed: ${oneLine(r.corrected)}`,
       `  - Why: ${oneLine(r.explanation)}`,
     );
@@ -350,7 +471,7 @@ function grammarNote(key: string): { point: string; body: string } | null {
 }
 
 function indexNote(): string {
-  const totals = db.prepare("SELECT COUNT(*) AS n, SUM(is_correct) AS ok, COUNT(DISTINCT day) AS days FROM turns").get() as {
+  const totals = db.prepare(`SELECT COUNT(*) AS n, SUM(is_correct) AS ok, COUNT(DISTINCT day) AS days FROM turns WHERE ${SPOKEN}`).get() as {
     n: number;
     ok: number | null;
     days: number;
@@ -358,9 +479,10 @@ function indexNote(): string {
   const weak = weakPoints(15);
   const recent = db
     .prepare(
-      `SELECT day, COUNT(*) AS n, SUM(is_correct) AS ok FROM turns GROUP BY day ORDER BY day DESC LIMIT 14`,
+      `SELECT day, SUM(${SPOKEN}) AS n, SUM(is_correct AND ${SPOKEN}) AS ok, SUM(NOT ${SPOKEN}) AS tr
+       FROM turns GROUP BY day ORDER BY day DESC LIMIT 14`,
     )
-    .all() as { day: string; n: number; ok: number }[];
+    .all() as { day: string; n: number; ok: number; tr: number }[];
   const pct = totals.n ? Math.round(((totals.ok ?? 0) / totals.n) * 100) : 0;
   const out = [
     "---",
@@ -374,11 +496,11 @@ function indexNote(): string {
     "",
     `Kept by neko, the learner's Japanese-practice pet. Level: JLPT ${config.level}. ${OWNED}`,
     "",
-    "- `Daily/<date>.md`: every sentence said that day, its correction, listening misses and grammar questions.",
+    "- `Daily/<date>.md`: every sentence said that day, its correction, listening misses, grammar questions and translation challenges.",
     "- `Grammar/<point>.md`: every mistake on one grammar point, with the sentence it came from.",
     "- `Notes/`: free for Hermes and the learner; neko never writes there.",
     "",
-    `**${totals.n} sentences** over ${dayCount(totals.days)}, ${pct}% correct.`,
+    `**${totals.n} ${totals.n === 1 ? "sentence" : "sentences"}** spoken over ${dayCount(totals.days)}, ${pct}% correct.`,
     "",
     "## Weakest grammar points (last 30 days)",
     "",
@@ -389,7 +511,17 @@ function indexNote(): string {
       // inside a table the link's alias pipe must be escaped
       out.push(`| ${grammarLink(w.point, "\\|")} | ${w.kind} | ${w.n} | ${localDay(w.last)} | ${oneLine(w.original)} → ${oneLine(w.fix)} |`);
   } else out.push("No mistakes recorded in the last 30 days.");
+  const translations = db
+    .prepare(
+      `SELECT a.at, a.day, a.total, a.answer, c.zh FROM challenge_attempts a JOIN challenges c ON c.id = a.challenge_id
+       ORDER BY a.at DESC LIMIT 10`,
+    )
+    .all() as { at: number; day: string; total: number; answer: string; zh: string }[];
+  if (translations.length) {
+    out.push("", "## Recent translations", "", "| Day | Score | Chinese | Answer |", "|---|---|---|---|");
+    for (const t of translations) out.push(`| ${dayLink(t.day, "\\|")} | ${t.total}/100 | ${oneLine(t.zh)} | ${oneLine(t.answer)} |`);
+  }
   out.push("", "## Recent days", "");
-  for (const r of recent) out.push(`- ${dayLink(r.day)}: ${r.n} sentences, ${r.ok} correct`);
+  for (const r of recent) out.push(`- ${dayLink(r.day)}: ${r.n} spoken, ${r.ok} correct` + (r.tr ? `, ${r.tr} ${r.tr === 1 ? "translation" : "translations"}` : ""));
   return out.join("\n") + "\n";
 }
