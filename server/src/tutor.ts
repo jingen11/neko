@@ -3,7 +3,7 @@ import { chatJson, type ChatMessage } from "./llm.ts";
 import { knownPoints } from "./records.ts";
 
 /** Who is talking to whom — both prompts need this to read giving/receiving verbs and "you" correctly. */
-const SCENE = `Scene: a conversation between exactly two parties, who never change.
+export const SCENE = `Scene: a conversation between exactly two parties, who never change.
 - Every user message is always the learner: the owner of a pet cat named ねこ, speaking directly to the cat. The learner feeds, pets and cares for ねこ.
 - Every assistant message is always ねこ, the cat, played by the model. ねこ speaks only to the learner.
 No one else speaks, though the learner may talk about other people.`;
@@ -37,14 +37,14 @@ export interface Correction {
  * model writes down what the learner means *before* judging it, and checks each fix against that.
  * `is_correct` is not asked for — it is worked out from the mistakes that survive.
  */
-interface RawCorrection {
+export interface RawCorrection {
   meaning: string;
   mistakes: (Mistake & { keeps_meaning: boolean })[];
   corrected: string;
   natural: string;
 }
 
-const correctionSchema = {
+export const correctionSchema = {
   type: "object",
   properties: {
     meaning: { type: "string" },
@@ -74,7 +74,7 @@ const correctionSchema = {
 // The teacher sees the conversation exactly as ねこ does: the same system scene, the same chat
 // turns (user = the owner, assistant = ねこ), and the owner's sentence as the latest user message.
 // ねこ reads context well this way; a flattened transcript made the teacher lose who was talking to whom.
-const teacherPrompt = (known: string[]) => `You are the Japanese teacher of a JLPT ${config.level} learner. You sit beside them while they talk to their pet cat, ねこ.
+export const teacherPrompt = (known: string[]) => `You are the Japanese teacher of a JLPT ${config.level} learner. You sit beside them while they talk to their pet cat, ねこ.
 ${SCENE}
 - The messages below are that conversation. The assistant messages are ねこ's lines, not yours. Do not reply to the learner or continue the conversation.
 - Your job is to check the learner's latest message. It came from speech recognition.

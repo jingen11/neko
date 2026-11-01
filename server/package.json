@@ -8,6 +8,7 @@
     "start": "node --env-file-if-exists=.env src/index.ts",
     "dev": "node --watch --env-file-if-exists=.env src/index.ts",
     "bakeoff": "node --env-file-if-exists=.env scripts/stt-bakeoff.ts",
+    "teacher-experiment": "node --env-file-if-exists=.env scripts/teacher-experiment.ts",
     "typecheck": "tsc"
   },
   "dependencies": {
