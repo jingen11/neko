@@ -71,56 +71,35 @@ const correctionSchema = {
   required: ["meaning", "mistakes", "corrected", "natural"],
 };
 
-const teacherPrompt = (known: string[]) => `You are a careful Japanese teacher. A JLPT ${config.level} learner is practising by talking to their pet cat, ねこ. You check each sentence the learner says to the cat. Sentences come from speech recognition.
-
+// The teacher sees the conversation exactly as ねこ does: the same system scene, the same chat
+// turns (user = the owner, assistant = ねこ), and the owner's sentence as the latest user message.
+// ねこ reads context well this way; a flattened transcript made the teacher lose who was talking to whom.
+const teacherPrompt = (known: string[]) => `You are the Japanese teacher of a JLPT ${config.level} learner. You sit beside them while they talk to their pet cat, ねこ.
 ${SCENE}
+- The messages below are that conversation. The assistant messages are ねこ's lines, not yours. Do not reply to the learner or continue the conversation.
+- Your job is to check the learner's latest message. It came from speech recognition.
+- First understand it the way ねこ does: as the owner talking to their cat, in the flow of the conversation. "I" is the owner; "you" is ねこ. Japanese often leaves both out — fill them in from the conversation.
+- When the owner gives ねこ something or does something for it, 〜てあげる / あげる is the right verb. くれる / 〜てくれる is for things done for the owner, もらう / 〜てもらう for receiving. A giving verb is only wrong when it points the wrong way.
+- Flag only real grammar or vocabulary mistakes. Not mistakes: punctuation, kana vs kanji, casual speech or mixed casual/polite, particles natives drop in speech, style preferences.
 
-Work in this order — the output fields follow it.
-
-1. meaning — In one plain English sentence, say what the learner means, as said to ねこ. Name who does what for whom ("I", "you" = the cat, or someone the learner mentions). Japanese often leaves out the subject and the receiver; fill them in from the scene and the conversation. Read the sentence the way the cat would: as a message to it from its owner.
-
-2. mistakes — Only real grammar or vocabulary errors in what the learner said, judged against that meaning. For each one:
-   - original: the wrong part, exactly as the learner said it. fix: the corrected part.
-   - keeps_meaning: true only if the fixed sentence still means exactly what you wrote in "meaning" — the same people, the same action, the same direction of giving. A fix that changes who something is for, or who does it, is not a correction; set false.
-   - type, grammar_point (2–6 words, e.g. "i-adjective past tense"), explanation (one sentence, max 20 words, simple English, agreeing with the fix).
-   If the sentence has no mistakes, return an empty list. That is the normal case for a sentence that is fine.
-
-3. corrected — the whole sentence with only the fixes above applied, keeping the learner's words. If there are no mistakes, repeat the sentence unchanged.
-
-4. natural — how a native would say it, only if that is quite different from "corrected"; otherwise "".
-
-How giving and receiving verbs work here. They mark direction — who benefits — not politeness:
-- あげる / 〜てあげる: the speaker gives to someone, or does something for them. When the learner gives the cat something or does something for it, this is the correct verb.
-- くれる / 〜てくれる: someone gives to the speaker, or does something for the speaker — for example the cat doing something for the learner.
-- もらう / 〜てもらう: the speaker receives something, told from the receiver's side.
-- Textbooks warn that saying 〜てあげる to the person you are talking to can sound condescending. That warning is about superiors, strangers and polite relationships. It does not apply to an owner talking to their own pet, so it is never a mistake here.
-- Removing a giving verb, or swapping it for another, changes who the action is for. Only flag one that points the wrong way for the people in "meaning".
-
-Not mistakes:
-- missing punctuation, kana-vs-kanji spelling, or other speech-recognition artifacts
-- casual speech, or mixing casual and polite forms
-- particles native speakers also drop in speech
-- anything that is only a style preference${
+Output, in this order:
+- meaning: one plain English sentence — what ねこ understands the owner to be saying to it (who does what for whom).
+- mistakes: each real mistake. original: the wrong part as said; fix: the corrected part; keeps_meaning: true only if the fixed sentence still means exactly your "meaning" (same people, same action, same direction); type; grammar_point (2–6 words); explanation (one sentence, max 20 words, simple English). An empty list is normal for a fine sentence.
+- corrected: the whole sentence with only those fixes, keeping the learner's words (unchanged if there are none).
+- natural: how a native would say it, only if quite different; otherwise "".${
   known.length
     ? `
-
-Naming: these grammar point names are already on record: ${known.join("; ")}. After you have found a mistake, if one of these names describes it, use that name exactly. The list says nothing about whether this sentence has a mistake.`
+Grammar point names already on record (use one exactly if it names a mistake you found; the list does not mean this sentence has that mistake): ${known.join("; ")}.`
     : ""
 }`;
 
 export async function correct(sentence: string, context: ChatMessage[] = []): Promise<{ data: Correction; ms: number }> {
-  const recent = context
-    .slice(-4)
-    .map((m) => `${m.role === "user" ? "Learner (owner)" : "ねこ (cat)"}: ${m.content}`)
-    .join("\n");
   // Reusing names lets the vault group repeat mistakes under one grammar note.
   const { data: raw, ms } = await chatJson<RawCorrection>(
     [
       { role: "system", content: teacherPrompt(knownPoints()) },
-      {
-        role: "user",
-        content: `${recent ? `Conversation so far:\n${recent}\n\n` : ""}The learner (owner) now says to ねこ (cat):\n${sentence}`,
-      },
+      ...context.filter((m) => m.role !== "system").slice(-12),
+      { role: "user", content: sentence },
     ],
     correctionSchema,
     { temperature: 0.1, maxTokens: 500 },
