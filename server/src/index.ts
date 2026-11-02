@@ -12,7 +12,7 @@ import type { ChatMessage } from "./llm.ts";
 import { rebuildVault } from "./records.ts";
 import { int16ToFloat32, transcribe } from "./stt.ts";
 import { listVoices, speak } from "./tts.ts";
-import { correct, petReply } from "./tutor.ts";
+import { checkSentence, petReply } from "./tutor.ts";
 import { saveRecording, score, testCases } from "./voicetest.ts";
 
 const app = Fastify({ logger: { level: process.env.NEKO_LOG_LEVEL ?? "info" }, disableRequestLogging: true, bodyLimit: 20 * 1024 * 1024 });
@@ -38,27 +38,17 @@ app.post("/api/stt", async (req, reply) => {
   return result;
 });
 
-// The page calls /api/reply and /api/correct at the same time, so the pet can start
-// talking while the (slower) correction card is still being written.
 type TurnBody = { Body: { text: string; history?: ChatMessage[] } };
 const cleanHistory = (h?: ChatMessage[]) => (h ?? []).filter((m) => m.role === "user" || m.role === "assistant");
 
-/** The pet's in-character reply to what the learner said. */
+/** The pet's in-character reply to what the learner said, with its check of the sentence. */
 app.post<TurnBody>("/api/reply", async (req, reply) => {
   const text = req.body?.text?.trim();
   if (!text) return reply.code(400).send({ error: "text is required" });
-  const pet = await petReply([...cleanHistory(req.body.history), { role: "user", content: text }]);
-  req.log.info(`reply ${pet.ms}ms`);
-  return { ...pet.data, ms: pet.ms };
-});
-
-/** Grammar correction card for what the learner said. */
-app.post<TurnBody>("/api/correct", async (req, reply) => {
-  const text = req.body?.text?.trim();
-  if (!text) return reply.code(400).send({ error: "text is required" });
-  const c = await correct(text, cleanHistory(req.body.history));
-  req.log.info(`correct ${c.ms}ms`);
-  return { ...c.data, ms: c.ms };
+  const turn = [...cleanHistory(req.body.history), { role: "user" as const, content: text }];
+  const [pet, check] = await Promise.all([petReply(turn), checkSentence(turn)]);
+  req.log.info(`reply ${pet.ms}ms, check ${check.ms}ms`);
+  return { ...pet.data, correction: check.data, ms: Math.max(pet.ms, check.ms) };
 });
 
 // ── translation challenge (see shared/protocol.ts) ──

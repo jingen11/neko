@@ -109,7 +109,7 @@ export const pointKey = (p: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-// The teacher isn't shown the saved names (it pushed it to repeat past wrong fixes), so it may word
+// The model isn't shown the saved names (in tests that list made it repeat past wrong fixes), so it may word
 // a known point differently. Fold a new name into a saved one of the same kind when they share
 // nearly all their words, in any order; otherwise it starts a new point.
 const FILLER = new Set(["vs", "versus", "and", "or", "of", "the", "a", "an", "with", "for", "in", "use", "usage", "form"]);
@@ -222,11 +222,6 @@ export function recentAsks(limit = 4, withinHours = 12): { question: string; ans
     answer: string;
   }[];
   return rows.reverse();
-}
-
-/** Names of grammar points already on record, so the correction model can reuse them. */
-export function knownPoints(limit = 40): string[] {
-  return weakPoints(limit, 3650).map((p) => p.point);
 }
 
 /** A short plain-text summary of the learner's record, for prompts. */

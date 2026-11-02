@@ -9,7 +9,7 @@ import { transcribe } from "./stt.ts";
 import { speak } from "./tts.ts";
 import { answerQuestion } from "./ask.ts";
 import * as records from "./records.ts";
-import { correct, petReply, type Correction, type PetReply } from "./tutor.ts";
+import { checkSentence, petReply, type Correction, type PetReply } from "./tutor.ts";
 
 /**
  * The pet's "brain" for connected clients (browser now, ESP32 board later).
@@ -97,20 +97,20 @@ async function onListenEnd(c: Client) {
   send(c, { type: "heard", text: r.text, ms: r.ms });
 }
 
-/** One conversation turn: the pet replies (and speaks) while the correction is prepared in parallel. */
+/** One conversation turn: ねこ's reply and ねこ's check of the sentence are asked for at the same time. */
 async function onConfirm(c: Client, text: string) {
   text = text.trim();
   if (!text) return;
   if (c.busy) return send(c, { type: "error", message: "The pet is still thinking about your last sentence." });
   c.busy = true;
   setState("think", "curious", 60_000);
-  const ctx = history.slice(-12);
+  const turn = [...history.slice(-12), { role: "user" as const, content: text }];
   const t0 = performance.now();
   let reply: PetReply | undefined;
   let correction: Correction | undefined;
   // allSettled: if one half fails, the other still finishes and the turn is still recorded
   const results = await Promise.allSettled([
-    petReply([...ctx, { role: "user", content: text }]).then(async ({ data, ms }) => {
+    petReply(turn).then(async ({ data, ms }) => {
       reply = data;
       history.push({ role: "user", content: text }, { role: "assistant", content: data.ja });
       history.splice(0, Math.max(0, history.length - 24));
@@ -118,9 +118,9 @@ async function onConfirm(c: Client, text: string) {
       await say(c, data.ja, data.en, data.mood);
       log.info(`pet speaking after ${Math.round(performance.now() - t0)}ms`);
     }),
-    correct(text, ctx).then(({ data, ms }) => {
+    checkSentence(turn).then(({ data, ms }) => {
       correction = data;
-      log.info(`correction ${ms}ms`);
+      log.info(`check ${ms}ms`);
       send(c, { type: "correction", text, ...data });
       pet.recordPractice(text, data.is_correct, data.mistakes.length);
       if (revertTimer) eatNext = true; // still talking: eat afterwards

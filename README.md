@@ -131,7 +131,7 @@ Grammar/<point>.md       every mistake on one grammar point, newest first
 Notes/                   free for you and Hermes; neko never writes here (Hermes's weekly reviews go in Notes/Weekly/)
 ```
 
-neko owns `Index.md`, `Daily/` and `Grammar/`: they are rewritten after each turn and rebuilt from the database on every start, so edits there are lost. The correction model is shown the grammar point names already on record and reuses them, so repeat mistakes collect in one note.
+neko owns `Index.md`, `Daily/` and `Grammar/`: they are rewritten after each turn and rebuilt from the database on every start, so edits there are lost. A new grammar point name that matches a saved one of the same kind (nearly the same words, in any order) is filed under the saved name, so repeat mistakes collect in one note.
 
 ### Pet protocol
 
@@ -142,8 +142,7 @@ The pet app and the ESP32 board talk to neko over one WebSocket at `/ws`: JSON m
 | Endpoint | |
 |---|---|
 | `POST /api/stt` | Raw 16-bit mono PCM (`x-sample-rate`, default 16000) → `{text, ms}` |
-| `POST /api/reply` | `{text, history}` → pet reply `{ja, en, mood, ms}` |
-| `POST /api/correct` | `{text, history}` → correction card `{is_correct, corrected, mistakes, natural, ms}` |
+| `POST /api/reply` | `{text, history}` → pet reply and its check of the sentence `{ja, en, mood, correction: {is_correct, corrected, mistakes, natural}, ms}` |
 | `POST /api/tts` | `{text, slow}` → WAV in the pet's voice |
 | `GET /api/voices` | VOICEVOX voices |
 | `GET /api/voice-test` | The voice-test sentences (Japanese, romaji, intended mistake) |
