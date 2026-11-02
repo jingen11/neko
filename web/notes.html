@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>neko notes</title>
+<link rel="icon" href="/pet/mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Noto+Serif+JP:wght@500&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="/"><img src="/pet/mark.png" alt="" width="24" height="24"><span>neko</span></a>
+  <div class="bar-right">
+    <a href="/">Practice</a>
+    <a href="/lab.html">Voice lab</a>
+  </div>
+</header>
+
+<main class="canvas">
+  <div class="title">
+    <h1>Notes</h1>
+    <p class="sub">Your learning record, as it is in the vault. Every sentence, translation, question and review is written here. To ask what you've learnt, use Ask Hermes on the practice page.</p>
+  </div>
+
+  <div class="notes">
+    <nav class="panel note-list" aria-label="Notes">
+      <div class="head"><h2>Files</h2><span id="noteCount" class="meta"></span></div>
+      <label for="noteFilter" class="sr">Filter notes</label>
+      <input id="noteFilter" class="filter" type="search" placeholder="Filter by name">
+      <div id="files"><p class="empty">Loading…</p></div>
+    </nav>
+    <article class="panel note-view" aria-live="polite">
+      <div class="head note-head">
+        <h2 id="notePath">No note open</h2>
+        <div class="actions">
+          <button id="copyBtn" class="chip-btn" type="button" disabled>Copy markdown</button>
+          <a id="downloadBtn" class="chip-btn" aria-disabled="true">Download .md</a>
+        </div>
+      </div>
+      <div id="note" class="md"><p class="empty">Pick a note on the left.</p></div>
+    </article>
+  </div>
+</main>
+
+<div id="toast" role="status" hidden></div>
+<script type="module" src="/src/notes.ts"></script>
+</body>
+</html>

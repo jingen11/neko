@@ -14,6 +14,7 @@
   <div class="bar-right">
     <span id="conn" class="conn" data-state="off">Not connected</span>
     <span id="level" class="pill" hidden></span>
+    <a href="/notes.html">Notes</a>
     <a href="/lab.html">Voice lab</a>
   </div>
 </header>
@@ -70,7 +71,8 @@
         <div class="actions">
           <button id="talk" class="btn primary talk" type="button" disabled>Hold to talk</button>
           <button id="send" class="btn" type="button" disabled>Send</button>
-          <button id="askBtn" class="btn ask-toggle" type="button" aria-pressed="false" disabled title="Ask a grammar question instead of practising">Ask grammar</button>
+          <button id="askBtn" class="btn ask-toggle" type="button" aria-pressed="false" disabled title="Ask a grammar question (answered by Hermes on Claude)">Ask grammar</button>
+          <button id="chatBtn" class="btn ask-toggle" type="button" aria-pressed="false" disabled title="Ask Hermes anything, such as what you've learnt this week (answered on the local model)">Ask Hermes</button>
           <span class="keys"><kbd>Space</kbd> hold to talk · <kbd>Enter</kbd> send</span>
         </div>
       </div>
@@ -94,10 +96,24 @@
       </div>
     </section>
 
-    <section class="panel review">
-      <div class="head"><h2>To review</h2><span class="meta">From this visit's corrections · ask about any point</span></div>
+    <section class="panel review" aria-labelledby="reviewTitle">
+      <div class="head"><h2 id="reviewTitle">Review your mistakes</h2><span id="reviewMeta" class="meta">This visit</span></div>
+      <div id="drill" class="drill" hidden>
+        <div class="drill-head"><span class="meta">Fix your sentence · <b id="drillPoint"></b></span><button id="drillClose" class="chip-btn" type="button">Close</button></div>
+        <p id="drillSaid" class="drill-said" lang="ja"></p>
+        <p id="drillZh" class="rv-zh" hidden></p>
+        <p class="ch-hint"><button id="drillHintBtn" class="chip-btn" type="button" aria-pressed="false">Hint</button><span id="drillHint" hidden></span></p>
+        <label for="drillAnswer" class="sr">Your corrected sentence</label>
+        <textarea id="drillAnswer" lang="ja" rows="2"></textarea>
+        <div class="actions">
+          <button id="drillCheck" class="btn primary" type="button">Check</button>
+          <button id="drillNext" class="btn" type="button">Another one</button>
+          <span class="keys"><kbd>Enter</kbd> check</span>
+        </div>
+        <div id="drillResult" aria-live="polite"></div>
+      </div>
       <ul id="review" class="review-list"></ul>
-      <p id="reviewEmpty" class="empty">Nothing to review yet.</p>
+      <p id="reviewEmpty" class="empty">Mistakes from this visit collect here, ready to practise. Earlier ones are in your <a href="/notes.html">notes</a>, or ask Hermes what you've been getting wrong.</p>
     </section>
 
     <section id="debug" class="panel debug" hidden>

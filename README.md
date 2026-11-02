@@ -8,7 +8,7 @@ Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 - **Phase 1 — speech loop: done.** Speech-to-text (ReazonSpeech) keeps learner mistakes (12/12 with a real voice); correction + pet reply via Qwen3.6; VOICEVOX voice. Test page at `/lab.html`.
 - **Phase 2 — the pet: done.** PixiJS cat at `/` (sample screen at `/?demo`, animation switch at `/?debug`), WebSocket protocol (`shared/protocol.ts`) that the ESP32 board will also use, pet stats (hunger, happiness, streak) in SQLite.
-- **Phase 3 — learning records + grammar Q&A: in progress.** Every sentence, correction, listening miss and question is written to `~/vault/Japanese/` (see [Learning records](#learning-records)). **Ask grammar** in the composer (or **Ask about this** on a review card) sends a question to Hermes, which reads those notes; if Hermes is down, the pet's own model answers.
+- **Phase 3 — learning records + grammar Q&A: in progress.** Every sentence, correction, listening miss and question is written to `~/vault/Japanese/` (see [Learning records](#learning-records)). **Ask grammar** in the composer (or **Ask about this** on a review card) sends a grammar question to Hermes on Claude. **Ask Hermes** sends anything else (chat, "what have I learnt this week?") to Hermes on its local model. Hermes reads those notes either way; if it's down, the pet's own model answers.
 
 Later phases: ESP32-S3 firmware, away-from-home access.
 
@@ -21,7 +21,7 @@ neko is a Fastify server that calls these local services:
 | llama.cpp (Qwen3.6) | `http://127.0.0.1:8080` | Grammar correction and pet replies (thinking off, JSON output) |
 | sherpa-onnx offline WebSocket server | `ws://127.0.0.1:6006` | Japanese speech-to-text (ReazonSpeech or SenseVoice) |
 | VOICEVOX engine | `http://127.0.0.1:50021` | The pet's voice |
-| Hermes Agent API server | `http://127.0.0.1:8642` | Grammar questions, answered from the vault (optional: falls back to llama.cpp) |
+| Hermes Agent API server | `http://127.0.0.1:8642` | Questions (grammar on Claude, casual on the local model), answered from the vault (optional: falls back to llama.cpp) |
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
 
@@ -44,7 +44,7 @@ sudo hermes gateway install --system --run-as-user jedev --start-now
 curl http://127.0.0.1:8642/health      # {"status": "ok", ...}
 ```
 
-neko asks Hermes to answer grammar questions with **Claude Opus 5.5** (`HERMES_MODEL` / `HERMES_PROVIDER`), which needs `ANTHROPIC_API_KEY` in `~/.hermes/.env`. Hermes's own default model stays the local Qwen, and live corrections stay on llama.cpp. If Hermes or the API is unreachable, llama.cpp answers in ~10 s, marked in the app as "the pet's own model".
+There are two WebSocket messages. `ask_grammar` (**Ask grammar**) has Hermes answer with **Claude Opus 5.5** (`HERMES_MODEL` / `HERMES_PROVIDER`), which needs `ANTHROPIC_API_KEY` in `~/.hermes/.env`. `ask_casual` (**Ask Hermes**) names no model, so Hermes answers with its own default model, the local Qwen; it's for chat and questions about your own progress, and allows a longer answer. Hermes's own default model stays the local Qwen, and live corrections stay on llama.cpp. If Hermes or the API is unreachable, llama.cpp answers in ~10 s, marked in the app as "the pet's own model".
 
 Answers come back in the language the question was written in (English, Chinese, Malay, Japanese, ...): a quick local call names the language first, and the prompt states it outright. The last 4 questions and answers from the past 12 hours go along with each question, so follow-ups like "and what about で?" work. Every answer card shows which model actually wrote it (e.g. "Hermes · Claude Opus 5.5"), taken from Hermes's `runtime` field, so a silent Hermes fallback to another model is visible.
 
@@ -122,16 +122,22 @@ ssh -L 8081:localhost:8081 <box>
 
 ## Learning records
 
-neko keeps every practice turn, mistake, listening miss (asked to repeat, asked to slow down, opened the English) and grammar question in SQLite, and renders Obsidian notes from it into `~/vault/Japanese/`:
+The Obsidian vault is the only copy of your learning record. neko appends each event to the day's note in `~/vault/Japanese/` once, and never reads, rewrites or rebuilds it. Hermes (or you) can reorganise the vault freely:
 
 ```
-Index.md                 totals, weakest grammar points (last 30 days), recent days
-Daily/<date>.md          each sentence with its fix and the pet's reply; listening misses; questions and answers
-Grammar/<point>.md       every mistake on one grammar point, newest first
+Daily/<date>.md          every sentence with its fix and the pet's reply, translations, listening misses, questions, review practice
 Notes/                   free for you and Hermes; neko never writes here (Hermes's weekly reviews go in Notes/Weekly/)
 ```
 
-neko owns `Index.md`, `Daily/` and `Grammar/`: they are rewritten after each turn and rebuilt from the database on every start, so edits there are lost. A new grammar point name that matches a saved one of the same kind (nearly the same words, in any order) is filed under the saved name, so repeat mistakes collect in one note.
+neko keeps no learning history of its own. The page shows only the current visit and starts empty after a refresh. To look back:
+- The **Notes** page (`/notes.html`) lists every markdown file in the vault and shows each one as written, with buttons to copy or download it.
+- **Ask Hermes** sends the question to Hermes on the local model, which reads the notes. For example, "what have I been getting wrong this week?"
+
+The database holds only the pet's stats and streak, and the generated translation challenge sentences.
+
+The **Review your mistakes** panel groups this visit's mistakes by grammar point, from both the conversation and the translation card. **Practise** brings back one of those sentences for you to fix, and ねこ checks it. Each attempt is appended to the day's note.
+
+To clear test records, stop neko and run `npm run reset-records` in `server/`. It only reports what it would delete. Add `--yes` to delete the daily notes, `--before YYYY-MM-DD` to keep that day and later, and `--pet` to also reset ねこ's stats and streak. It also removes what older versions left behind: `Index.md`, `Grammar/` and the old record tables in the database, which it backs up to `server/data/neko-backup-<time>.db` first. `Notes/` is never touched.
 
 ### Pet protocol
 
@@ -143,6 +149,9 @@ The pet app and the ESP32 board talk to neko over one WebSocket at `/ws`: JSON m
 |---|---|
 | `POST /api/stt` | Raw 16-bit mono PCM (`x-sample-rate`, default 16000) → `{text, ms}` |
 | `POST /api/reply` | `{text, history}` → pet reply and its check of the sentence `{ja, en, mood, correction: {is_correct, corrected, mistakes, natural}, ms}` |
+| `POST /api/review/practice` | `{point, said, original, fix, answer}` → ねこ's check of your fix `{ok, still, mistakes}` |
+| `GET /api/notes` | the vault's markdown files `[{path, mtime, size}]`, newest first |
+| `GET /api/notes/file?path=` | one note's markdown, as written |
 | `POST /api/tts` | `{text, slow}` → WAV in the pet's voice |
 | `GET /api/voices` | VOICEVOX voices |
 | `GET /api/voice-test` | The voice-test sentences (Japanese, romaji, intended mistake) |

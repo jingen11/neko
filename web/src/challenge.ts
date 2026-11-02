@@ -4,7 +4,7 @@ import type { Challenge, ChallengeResult, ChallengeState } from "../../shared/pr
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-export function initChallenge(demo: boolean, toast: (msg: string) => void) {
+export function initChallenge(demo: boolean, toast: (msg: string) => void, onResult: (zh: string, r: ChallengeResult) => void = () => {}) {
   const zh = $("chZh");
   const meta = $("chMeta");
   const hintBtn = $<HTMLButtonElement>("chHintBtn");
@@ -28,9 +28,9 @@ export function initChallenge(demo: boolean, toast: (msg: string) => void) {
     hintBtn.setAttribute("aria-pressed", "false");
     hintBtn.disabled = false;
     answer.disabled = false;
-    answer.value = s.last?.answer ?? "";
+    answer.value = "";
     checkBtn.disabled = false;
-    result.innerHTML = s.last ? renderResult(s.last) : EMPTY;
+    result.innerHTML = EMPTY;
   }
 
   function showError(msg: string) {
@@ -61,6 +61,7 @@ export function initChallenge(demo: boolean, toast: (msg: string) => void) {
     try {
       const r: ChallengeResult = demo ? demoResult(text) : await load(`/api/challenge/${current.id}/answer`, post({ text }));
       result.innerHTML = renderResult(r);
+      onResult(current.zh, r);
     } catch (err) {
       toast(`Couldn't score that: ${(err as Error).message}`);
     } finally {
@@ -133,8 +134,8 @@ function esc(s: string) {
 function demoState(kind: "daily" | "extra"): ChallengeState {
   const today = new Date().toLocaleDateString("en-CA");
   return kind === "daily"
-    ? { challenge: { id: 1, kind, day: today, zh: "我昨天把伞忘在电车上了。", topic: "a lost umbrella", grammar: "〜てしまう" }, last: demoResult("昨日、電車で傘を忘れてしまいました。") }
-    : { challenge: { id: 2, kind, day: today, zh: "如果明天下雨的话，我们就在家看电影吧。", topic: "a movie night", grammar: "〜たら conditional" }, last: null };
+    ? { challenge: { id: 1, kind, day: today, zh: "我昨天把伞忘在电车上了。", topic: "a lost umbrella", grammar: "〜てしまう" } }
+    : { challenge: { id: 2, kind, day: today, zh: "如果明天下雨的话，我们就在家看电影吧。", topic: "a movie night", grammar: "〜たら conditional" } };
 }
 
 function demoResult(answer: string): ChallengeResult {

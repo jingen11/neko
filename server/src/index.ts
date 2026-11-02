@@ -9,11 +9,13 @@ import * as challenge from "./challenge.ts";
 import { config } from "./config.ts";
 import { attach } from "./hub.ts";
 import type { ChatMessage } from "./llm.ts";
-import { rebuildVault } from "./records.ts";
+import { listNotes, readNote } from "./notes.ts";
+import { logReview } from "./records.ts";
 import { int16ToFloat32, transcribe } from "./stt.ts";
 import { listVoices, speak } from "./tts.ts";
 import { petTurn } from "./tutor.ts";
 import { saveRecording, score, testCases } from "./voicetest.ts";
+import type { ReviewAttempt, ReviewResult } from "../../shared/protocol.ts";
 
 const app = Fastify({ logger: { level: process.env.NEKO_LOG_LEVEL ?? "info" }, disableRequestLogging: true, bodyLimit: 20 * 1024 * 1024 });
 
@@ -57,6 +59,30 @@ app.post<{ Params: { id: string }; Body: { text?: string } }>("/api/challenge/:i
   const r = await challenge.grade(Number(req.params.id), String(req.body?.text ?? ""));
   req.log.info(`challenge #${req.params.id} scored ${r.total}`);
   return r;
+});
+
+// ── review and notes (see shared/protocol.ts) ──
+// The page sends the earlier sentence along: neko keeps no history to look it up in.
+app.post<{ Body: Partial<ReviewAttempt> }>("/api/review/practice", async (req, reply) => {
+  const b = req.body ?? {};
+  const answer = String(b.answer ?? "").trim();
+  const [point, said, original, fix] = [b.point, b.said, b.original, b.fix].map((v) => String(v ?? "").trim());
+  if (!answer || !said) return reply.code(400).send({ error: "said and answer are required" });
+  // ねこ checks the answer the same way it checks a sentence in conversation.
+  const { correction } = await petTurn([{ role: "user", content: answer }]);
+  // The old wrong part is still there (and the fix isn't just a longer version of it).
+  const still = !!original && answer.includes(original) && !fix.includes(original);
+  const ok = correction.is_correct && !still;
+  logReview(point, said, answer, ok);
+  req.log.info(`review "${point}": ${ok ? "right" : "not yet"}`);
+  const result: ReviewResult = { ok, answer, mistakes: correction.mistakes, still };
+  return result;
+});
+app.get("/api/notes", () => listNotes());
+app.get<{ Querystring: { path?: string } }>("/api/notes/file", async (req, reply) => {
+  const text = await readNote(String(req.query.path ?? ""));
+  if (text === null) return reply.code(404).send({ error: "no such note" });
+  return reply.type("text/markdown; charset=utf-8").send(text);
 });
 
 // ── voice test: read sentences with deliberate mistakes; does STT keep them? ──
@@ -121,8 +147,4 @@ makeDaily();
 setInterval(makeDaily, 30 * 60_000).unref();
 
 // Notes are rendered from the database, so rebuilding brings the vault up to date after code changes.
-if (config.vaultDir)
-  rebuildVault().then(
-    () => app.log.info(`vault notes written to ${config.vaultDir}`),
-    (err) => app.log.warn(`vault rebuild failed: ${(err as Error).message}`),
-  );
+if (config.vaultDir) app.log.info(`learning records are appended to ${config.vaultDir}/Daily/`);
