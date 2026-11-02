@@ -13,8 +13,8 @@
  *   ← heard {text}                      (speech-to-text result)
  *   confirm {text}                      (browser: after the user checks/edits it; board: immediately)
  *   ← state {anim:"think"}
+ *   ← correction {...}                  (ねこ's own check of the sentence, from the same answer as its reply)
  *   ← say {ja, en, mood} → audio_start → [binary voice frames] → audio_end
- *   ← correction {...}                  (ねこ's own check, asked for alongside the reply; usually arrives a little after)
  *   ← state {...}                       (stats updated: practising feeds the pet)
  *
  * Grammar question (answered by Hermes from the learner's vault record, or by the local model):

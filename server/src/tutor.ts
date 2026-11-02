@@ -40,12 +40,11 @@ export interface PetReply {
 }
 
 /**
- * Each turn fires two calls at once with the same ねこ prompt and messages. A separate teacher kept
- * "correcting" sentences ねこ had understood fine, so the check now comes from ねこ itself:
- * - petReply: warm temperature, only ねこ's line, so the voice isn't kept waiting.
- * - checkSentence: low temperature. Field order matters: llama.cpp writes fields in schema order, so
- *   this ねこ replies first and then judges the message the way it just understood it. Only the
- *   check is used; its reply is thrown away.
+ * ねこ replies and checks the owner's Japanese in one answer: the line ねこ speaks and the check come
+ * from the same understanding of the message. (A separate teacher, and then a separate low-temperature
+ * check call, both kept "correcting" sentences ねこ had understood fine.) Field order matters:
+ * llama.cpp writes fields in schema order, so ねこ replies first and then judges the message the way
+ * it just understood it.
  */
 interface RawTurn extends PetReply {
   mistakes: (Mistake & { keeps_meaning: boolean })[];
@@ -55,19 +54,13 @@ interface RawTurn extends PetReply {
 
 const KINDS = ["particle", "conjugation", "tense", "vocabulary", "word_order", "politeness", "other"];
 
-const replyProps = {
-  // Length caps make the grammar close the string, so a rambling reply can't overrun max_tokens and truncate the JSON.
-  ja: { type: "string", maxLength: 80 },
-  en: { type: "string", maxLength: 200 },
-  mood: { enum: ["happy", "curious", "sleepy", "excited", "worried"] },
-};
-
-const replySchema = { type: "object", properties: replyProps, required: ["ja", "en", "mood"] };
-
-const checkSchema = {
+const turnSchema = {
   type: "object",
   properties: {
-    ...replyProps,
+    // Length caps make the grammar close the string, so a rambling reply can't overrun max_tokens and truncate the JSON.
+    ja: { type: "string", maxLength: 80 },
+    en: { type: "string", maxLength: 200 },
+    mood: { enum: ["happy", "curious", "sleepy", "excited", "worried"] },
     mistakes: {
       type: "array",
       maxItems: 5,
@@ -109,15 +102,10 @@ Your owner is a JLPT ${config.level} learner, and their messages come from speec
 
 const messages = (history: ChatMessage[]): ChatMessage[] => [{ role: "system", content: petPrompt() }, ...history.slice(-13)];
 
-/** ねこ's spoken reply. */
-export function petReply(history: ChatMessage[]) {
-  return chatJson<PetReply>(messages(history), replySchema, { temperature: 0.7 });
-}
-
-/** ねこ's check of the owner's latest message. */
-export async function checkSentence(history: ChatMessage[]): Promise<{ data: Correction; ms: number }> {
+/** ねこ's spoken reply and its check of the owner's latest message, from one answer. */
+export async function petTurn(history: ChatMessage[]): Promise<{ reply: PetReply; correction: Correction; ms: number }> {
   const said = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
-  const { data: raw, ms } = await chatJson<RawTurn>(messages(history), checkSchema, { temperature: 0.1 });
+  const { data: raw, ms } = await chatJson<RawTurn>(messages(history), turnSchema, { temperature: 0.7 });
 
   // A "fix" that changes what the owner meant, or changes nothing, is not a correction; drop it.
   const mistakes: Mistake[] = raw.mistakes
@@ -132,5 +120,5 @@ export async function checkSentence(history: ChatMessage[]): Promise<{ data: Cor
       ? mistakes.reduce((s, m) => s.replace(m.original, m.fix), said)
       : raw.corrected;
   const natural = dropped ? "" : raw.natural;
-  return { data: { is_correct, corrected, mistakes, natural }, ms };
+  return { reply: { ja: raw.ja, en: raw.en, mood: raw.mood }, correction: { is_correct, corrected, mistakes, natural }, ms };
 }
