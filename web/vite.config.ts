@@ -10,4 +10,7 @@ export default defineConfig({
     },
     fs: { allow: [".."] },
   },
+  build: {
+    rollupOptions: { input: { main: "index.html", notes: "notes.html" } },
+  },
 });

@@ -1,7 +1,10 @@
 import { Application } from "pixi.js";
 import type { AnswerMsg, Anim, CorrectionMsg, Mood, PetStats, ServerMessage } from "../../shared/protocol.ts";
+
+type AskKind = AnswerMsg["kind"];
 import { AudioIO } from "./audio.ts";
 import { initChallenge } from "./challenge.ts";
+import { initReview } from "./review.ts";
 import { Net } from "./net.ts";
 import { Pet } from "./pet.ts";
 import "./style.css";
@@ -11,6 +14,7 @@ const textEl = $<HTMLTextAreaElement>("text");
 const talkBtn = $<HTMLButtonElement>("talk");
 const sendBtn = $<HTMLButtonElement>("send");
 const askBtn = $<HTMLButtonElement>("askBtn");
+const chatBtn = $<HTMLButtonElement>("chatBtn");
 const chat = $("chat");
 
 // Mirrors server/src/pet.ts: one practised sentence takes FEED_PER_TURN off hunger; below SAD_BELOW happiness it's sad.
@@ -27,9 +31,8 @@ let thinking = false;
 let mood: Mood = "sleepy";
 let anim: Anim = "sleep";
 let lastUserEntry: HTMLElement | null = null;
-let askMode = false; // the composer sends a grammar question instead of a practice sentence
+let askMode: AskKind | null = null; // the composer sends a question instead of a practice sentence
 let pendingAnswer: HTMLElement | null = null; // the answer card waiting for Hermes
-const grammar = new Map<string, { n: number; original: string; fix: string }>();
 
 // ── the cat: PixiJS starts at once so the sleeping cat shows before waking ──
 (async () => {
@@ -111,7 +114,7 @@ function setAwake() {
   awake = true;
   $("wakeBtn").hidden = true;
   $("petBtn").hidden = false;
-  for (const el of [talkBtn, sendBtn, askBtn, textEl]) el.disabled = false;
+  for (const el of [talkBtn, sendBtn, askBtn, chatBtn, textEl]) el.disabled = false;
   $("chatEmpty").textContent = "Listening for the first line…";
 }
 
@@ -167,6 +170,7 @@ function onMessage(m: ServerMessage) {
       if (pendingAnswer?.classList.contains("wait") && m.message.startsWith("Couldn't answer")) {
         pendingAnswer.remove();
         pendingAnswer = null;
+        if (askMode) sendBtn.disabled = false;
       }
       lastUserEntry?.querySelector(".check.wait")?.remove();
       thinking = false;
@@ -228,29 +232,37 @@ document.addEventListener("keyup", (e) => {
   }
 });
 
-// ── ask mode: the composer sends a grammar question (answered by Hermes from your vault) ──
-function setAskMode(on: boolean) {
-  askMode = on;
-  askBtn.setAttribute("aria-pressed", String(on));
-  textEl.closest(".composer")!.classList.toggle("asking", on);
-  textEl.placeholder = on ? "Ask about grammar, in English or Japanese… e.g. when do I use に vs で?" : "話してみて… or type here";
-  textEl.lang = on ? "" : "ja";
-  $("text").previousElementSibling!.textContent = on ? "Your grammar question" : "Your reply in Japanese";
-  sendBtn.textContent = on ? "Ask" : "Send";
-  sendBtn.disabled = on ? !!pendingAnswer : thinking;
-}
-askBtn.addEventListener("click", () => {
-  setAskMode(!askMode);
-  textEl.focus();
-});
+// ── ask mode: the composer sends a question to Hermes instead of a practice sentence ──
+// Ask grammar → ask_grammar (Hermes on Claude). Ask Hermes → ask_casual (Hermes on its local model), for
+// chat and questions about your own progress ("what have I learnt this week?").
+const ASK = {
+  grammar: { btn: askBtn, label: "Grammar question", placeholder: "Ask about grammar, in English or Japanese… e.g. when do I use に vs で?", sr: "Your grammar question" },
+  casual: { btn: chatBtn, label: "Question for Hermes", placeholder: "Ask Hermes anything… e.g. what have I learnt this week?", sr: "Your question for Hermes" },
+} as const;
 
-function ask(text: string) {
+function setAskMode(kind: AskKind | null) {
+  askMode = kind;
+  for (const [k, v] of Object.entries(ASK)) v.btn.setAttribute("aria-pressed", String(k === kind));
+  textEl.closest(".composer")!.classList.toggle("asking", !!kind);
+  textEl.placeholder = kind ? ASK[kind].placeholder : "話してみて… or type here";
+  textEl.lang = kind ? "" : "ja";
+  $("text").previousElementSibling!.textContent = kind ? ASK[kind].sr : "Your reply in Japanese";
+  sendBtn.textContent = kind ? "Ask" : "Send";
+  sendBtn.disabled = kind ? !!pendingAnswer : thinking;
+}
+for (const [k, v] of Object.entries(ASK))
+  v.btn.addEventListener("click", () => {
+    setAskMode(askMode === k ? null : (k as AskKind));
+    textEl.focus();
+  });
+
+function ask(text: string, kind: AskKind = "grammar") {
   if (pendingAnswer) return toast("Still looking into your last question.");
-  net.send({ type: "ask", text });
+  net.send({ type: kind === "grammar" ? "ask_grammar" : "ask_casual", text });
   $("chatEmpty").hidden = true;
   const q = document.createElement("div");
   q.className = "msg me q";
-  q.innerHTML = `<p class="label">Grammar question</p><p class="text">${esc(text)}</p>`;
+  q.innerHTML = `<p class="label">${ASK[kind].label}</p><p class="text">${esc(text)}</p>`;
   const a = document.createElement("div");
   a.className = "msg answer wait";
   a.innerHTML = `<p class="label">Answer</p><div class="body"><p>Looking through your notes…</p></div>`;
@@ -275,8 +287,8 @@ function send() {
   if (text && askMode && awake) {
     if (pendingAnswer) return toast("Still looking into your last question.");
     textEl.value = "";
-    ask(text);
-    setAskMode(false); // back to practice; the answer arrives in the thread
+    ask(text, askMode);
+    setAskMode(null); // back to practice; the answer arrives in the thread
     return;
   }
   if (!text || thinking || !awake) return;
@@ -311,31 +323,8 @@ function showCorrection(c: CorrectionMsg) {
         )
         .join("")}</ul>${natural}</div>`;
   e.insertAdjacentHTML("beforeend", html);
-  if (!c.is_correct) {
-    for (const m of c.mistakes) {
-      const g = grammar.get(m.grammar_point);
-      grammar.set(m.grammar_point, { n: (g?.n ?? 0) + 1, original: m.original, fix: m.fix });
-    }
-    renderReview();
-  }
+  if (!c.is_correct) review.add(c.text, c.corrected, c.mistakes);
   scrollChat();
-}
-
-function renderReview() {
-  const rows = [...grammar].sort((a, b) => b[1].n - a[1].n);
-  $("reviewEmpty").hidden = rows.length > 0;
-  $("review").innerHTML = rows
-    .map(
-      ([point, g]) =>
-        `<li><div class="top"><span>${esc(point)}</span><span class="n">×${g.n}</span></div><p class="eg" lang="ja"><del>${esc(g.original)}</del> → <ins>${esc(g.fix)}</ins></p><button class="chip-btn ask-about" type="button" data-point="${esc(point)}">Ask about this</button></li>`,
-    )
-    .join("");
-  for (const b of $("review").querySelectorAll<HTMLButtonElement>(".ask-about"))
-    b.addEventListener("click", () => {
-      if (!awake) return;
-      const g = grammar.get(b.dataset.point!);
-      ask(`Explain "${b.dataset.point}". I said ${g?.original ?? ""} but it should be ${g?.fix ?? ""}. Why?`);
-    });
 }
 
 // ── chat thread ──────────────────────────────────────────────
@@ -437,8 +426,11 @@ function esc(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+// This visit's mistakes, from the conversation and the translation card. Asking about a point goes to
+// the conversation once ねこ is awake.
+const review = initReview(demo, toast, (q) => (awake ? ask(q) : toast(`Wake ねこ first to ask about it.`)));
 // The translation challenge card works over HTTP, so it loads before the cat is woken.
-initChallenge(demo, toast);
+initChallenge(demo, toast, (zh, r) => review.add(r.answer, r.corrected, r.mistakes, zh));
 
 // ?demo fills the screen with sample messages, for looking at the design without the server.
 if (demo) import("./demo.ts").then((d) => d.run(onMessage, setAwake, (t) => (lastUserEntry = userEntry(t)), ask));

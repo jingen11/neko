@@ -195,6 +195,22 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
 .review-list .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-weight: 600; }
 .review-list .n { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
 .review-list .eg { margin-top: 4px; }
+.review-list .rv-meta { margin-top: 2px; font-size: var(--fs-small); color: var(--muted); }
+.review-list .rv-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.review-list li.open { grid-column: 1 / -1; }
+.rv-all { margin-top: 12px; padding-top: 4px; border-top: 1px solid var(--rule); display: grid; gap: 0; }
+.rv-all li { padding: 10px 0; border: 0; border-radius: 0; background: none; border-bottom: 1px solid var(--rule); }
+.rv-all li:last-child { border-bottom: 0; }
+.rv-said { font-size: 17px; line-height: 26px; }
+.rv-all .why, .rv-day, .rv-zh { color: var(--muted); }
+.rv-day { font-size: var(--fs-small); }
+.rv-zh span { color: var(--text); }
+/* practising one old sentence: sits above the list while open */
+.drill { margin-bottom: 12px; padding: 16px; border-radius: 14px; background: var(--raised); border: 1px solid var(--border); }
+.drill-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.drill-head b { color: var(--text); font-weight: 600; }
+.drill-said { margin-top: 8px; font: 500 var(--fs-ja)/36px var(--serif); }
+.drill .ch-hint { margin: 8px 0 10px; }
 
 /* translation challenge: the task on the left, the score on the right */
 .ch-body { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 24px; }
@@ -212,6 +228,50 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
 .ch-comment { margin-top: 12px; }
 .ch-result .check { margin-top: 10px; }
 
+/* ---------- notes page: the files on the left, the open note on the right ---------- */
+.notes { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: var(--gap); align-items: start; }
+.note-list { position: sticky; top: 16px; max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
+#files { overflow-y: auto; min-height: 0; margin-top: 10px; scrollbar-width: thin; }
+.filter { width: 100%; height: var(--control-height); padding: 0 14px; border: 1px solid var(--control); border-radius: 999px; background: var(--raised); font: inherit; color: inherit; }
+.file-group + .file-group { margin-top: 14px; }
+.file-group h3 { margin: 0 0 4px; font-size: var(--fs-small); font-weight: 600; color: var(--muted); }
+.file-group button { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 7px 10px; border: 0; border-radius: 10px; background: none; text-align: left; cursor: pointer; }
+.file-group button:hover { background: var(--pill-neutral-bg); }
+.file-group button[aria-current="true"] { background: var(--raised); box-shadow: inset 0 0 0 1px var(--border); font-weight: 600; }
+.file-group button span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-head { flex-wrap: wrap; }
+.note-head h2 { min-width: 0; overflow-wrap: anywhere; }
+.note-head .actions { margin-top: 0; }
+a.chip-btn { display: inline-flex; align-items: center; text-decoration: none; }
+a.chip-btn[aria-disabled="true"] { pointer-events: none; color: var(--muted); }
+
+/* a rendered note */
+.md { line-height: 24px; overflow-wrap: anywhere; }
+.md > * + * { margin-top: 10px; }
+.md h2 { font: 500 26px/34px var(--serif); margin-top: 4px; }
+.md h3 { font-size: 18px; line-height: 26px; font-weight: 600; margin-top: 22px; }
+.md h4 { font-size: 16px; line-height: 24px; font-weight: 600; margin-top: 22px; }
+.md h5, .md h6 { font-size: 15px; font-weight: 600; margin-top: 18px; }
+.md ul, .md ol { padding-left: 20px; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md li + li { margin-top: 2px; }
+.md blockquote { margin: 10px 0 0; padding: 4px 0 4px 14px; border-left: 3px solid var(--accent); color: var(--text); }
+.md code { font-size: 13px; background: var(--pill-neutral-bg); padding: 1px 5px; border-radius: 4px; }
+.md pre { padding: 12px 14px; background: var(--raised); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.md hr { border: 0; border-top: 1px solid var(--rule); }
+.md a { color: var(--accent); }
+.md .tag { color: var(--accent); font-size: var(--fs-small); }
+.md .table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 13px; }
+.md th, .md td { padding: 6px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+.md th { font-weight: 600; }
+.props { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.props div { display: inline-flex; gap: 6px; padding: 2px 10px; border-radius: 999px; background: var(--pill-neutral-bg); font-size: var(--fs-small); }
+.props dt { color: var(--muted); }
+.props dd { margin: 0; }
+
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 14px; background: var(--primary); color: var(--on-primary); box-shadow: 0 6px 20px rgb(0 0 0 / .18); z-index: 10; }
 
 /* ---------- tablet ---------- */
@@ -223,6 +283,8 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ch-body { grid-template-columns: minmax(0, 1fr); }
+  .notes { grid-template-columns: minmax(0, 1fr); }
+  .note-list { position: static; max-height: 50vh; }
 }
 
 /* ---------- phone ---------- */
@@ -239,7 +301,7 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
   .stage-panel { height: 300px; padding: 12px; }
   .keys { display: none; }
   .composer .talk { flex: 1; height: 48px; }
-  .composer #send, .composer #askBtn { height: 48px; }
+  .composer #send, .composer #askBtn, .composer #chatBtn { height: 48px; }
   .zh { font-size: 22px; line-height: 32px; }
   .review-list { grid-template-columns: minmax(0, 1fr); }
 }

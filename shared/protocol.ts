@@ -17,8 +17,9 @@
  *   ← say {ja, en, mood} → audio_start → [binary voice frames] → audio_end
  *   ← state {...}                       (stats updated: practising feeds the pet)
  *
- * Grammar question (answered by Hermes from the learner's vault record, or by the local model):
- *   ask {text}  →  ← state {anim:"think"}  →  ← answer {question, text, source}
+ * Questions to Hermes, which reads the learner's vault (or the local model, if Hermes is down):
+ *   ask_grammar {text}  →  ← state {anim:"think"}  →  ← answer {...}   Hermes on Claude
+ *   ask_casual  {text}  →  ← state {anim:"think"}  →  ← answer {...}   Hermes on its local model (chat, "what have I learnt?")
  *
  * Every turn, correction, listening miss (repeat / reveal) and question is written to the vault.
  */
@@ -67,13 +68,19 @@ export interface Reveal {
   sayId: string;
 }
 
-/** A grammar question, in English or Japanese. */
-export interface Ask {
-  type: "ask";
+/** A grammar question, in any language. Hermes answers it on Claude. */
+export interface AskGrammar {
+  type: "ask_grammar";
   text: string;
 }
 
-export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | Ask;
+/** Anything else for Hermes: chat, or questions about your own progress. Hermes answers it on its local model. */
+export interface AskCasual {
+  type: "ask_casual";
+  text: string;
+}
+
+export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar | AskCasual;
 
 // ── server → client ──────────────────────────────────────────────────────────
 
@@ -142,8 +149,10 @@ export interface CorrectionMsg {
   natural: string;
 }
 
+/** The answer to an ask_grammar or ask_casual question. */
 export interface AnswerMsg {
   type: "answer";
+  kind: "grammar" | "casual";
   question: string;
   text: string; // plain text with light markdown (**bold**, "- " lists)
   source: "hermes" | "local"; // local = Hermes unavailable, answered by the pet's own model
@@ -186,5 +195,32 @@ export interface ChallengeResult {
 
 export interface ChallengeState {
   challenge: Challenge;
-  last: ChallengeResult | null; // the latest attempt at this challenge, if any
+}
+
+// ── review (HTTP) ────────────────────────────────────────────────────────────
+// The Review panel only knows this visit: the page collects its own mistakes. To look further back,
+// open the notes or ask Hermes.
+//   POST /api/review/practice        ReviewAttempt → ReviewResult   ねこ checks your fix of an earlier sentence
+//   GET  /api/notes                  → NoteFile[]                   the vault's markdown files, newest first
+//   GET  /api/notes/file?path=       → text/markdown                one note, as written
+
+export interface ReviewAttempt {
+  point: string;
+  said: string; // the sentence with the mistake
+  original: string; // the wrong part
+  fix: string;
+  answer: string; // your corrected sentence
+}
+
+export interface ReviewResult {
+  ok: boolean;
+  answer: string;
+  mistakes: CorrectionMistake[]; // what ねこ found in your answer
+  still: boolean; // the old mistake is still in your answer
+}
+
+export interface NoteFile {
+  path: string; // relative to the vault folder, e.g. "Daily/2026-11-02.md"
+  mtime: number;
+  size: number;
 }

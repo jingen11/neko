@@ -7,7 +7,7 @@ import type { ChatMessage } from "./llm.ts";
 import * as pet from "./pet.ts";
 import { transcribe } from "./stt.ts";
 import { speak } from "./tts.ts";
-import { answerQuestion } from "./ask.ts";
+import { answerQuestion, type QuestionKind } from "./ask.ts";
 import * as records from "./records.ts";
 import { petTurn } from "./tutor.ts";
 
@@ -124,17 +124,17 @@ async function onConfirm(c: Client, text: string) {
   }
 }
 
-/** A grammar question: Hermes answers from the vault (or the local model if Hermes is down). */
-async function onAsk(c: Client, question: string) {
+/** A question (ask_grammar or ask_casual): the cat thinks meanwhile; the answer is sent back and written to the vault. */
+async function onAsk(c: Client, question: string, kind: QuestionKind) {
   question = question.trim();
   if (!question) return;
   if (c.asking) return send(c, { type: "error", message: "Still looking into your last question." });
   c.asking = true;
   setState("think", "curious", 200_000);
   try {
-    const a = await answerQuestion(question, log);
-    log.info(`answer from ${a.source} (${a.model}) in ${a.ms}ms`);
-    send(c, { type: "answer", question, text: a.text, source: a.source, model: a.model, ms: a.ms });
+    const a = await answerQuestion(question, kind, log);
+    log.info(`${kind} question, answered by ${a.source} (${a.model}) in ${a.ms}ms`);
+    send(c, { type: "answer", kind, question, text: a.text, source: a.source, model: a.model, ms: a.ms });
     records.logAsk(question, a.text, a.source === "hermes" ? `Hermes (${a.model})` : `${a.model} (Hermes unavailable)`);
     setState("happy", "happy", 1500);
   } catch (err) {
@@ -188,8 +188,10 @@ async function onMessage(c: Client, msg: ClientMessage) {
       }
       return;
     }
-    case "ask":
-      return onAsk(c, msg.text);
+    case "ask_grammar":
+      return onAsk(c, msg.text, "grammar");
+    case "ask_casual":
+      return onAsk(c, msg.text, "casual");
   }
 }
 

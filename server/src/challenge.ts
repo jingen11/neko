@@ -6,19 +6,35 @@ import { chatJson } from "./llm.ts";
 import * as pet from "./pet.ts";
 import { localDay } from "./pet.ts";
 import * as records from "./records.ts";
-import type { Mistake } from "./tutor.ts";
 
 /**
  * Translation challenge: one Simplified Chinese sentence to translate into Japanese, then a score.
  *
  * Randomness comes from code, not from a hot model. A seeded generator picks a brief
  * (topic, grammar point, sentence type, politeness, length) from the lists below, and the model
- * only writes a sentence for that brief. Recently used topics and grammar points are picked less,
- * the learner's weak points more. The daily challenge's seed comes from the date, and it is stored
+ * only writes a sentence for that brief. Recently used topics and grammar points are picked less.
+ * The daily challenge's seed comes from the date, and it is stored
  * once made, so it stays the same all day. On-demand challenges get a fresh random seed.
  */
 
-// Tables live in records.ts with the other learning records (the vault notes read them too).
+// The challenges themselves (the generated sentences) are app state, kept here. Attempts are learning
+// records and go to the vault only (records.logTranslation); the card shows only this visit's attempts.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS challenges (
+    id INTEGER PRIMARY KEY,
+    at INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    grammar TEXT NOT NULL,
+    style TEXT NOT NULL,
+    zh TEXT NOT NULL,
+    ja TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS challenges_daily ON challenges(day) WHERE kind = 'daily';
+  CREATE INDEX IF NOT EXISTS challenges_day ON challenges(day);
+`);
 
 // ── what a challenge can be about ───────────────────────────────────────────
 
@@ -86,7 +102,6 @@ function pickWeighted<T>(rand: () => number, items: T[], weight: (item: T) => nu
 
 const RECENT_DAYS = 30;
 const RECENT_WEIGHT = 0.15; // a topic or grammar point used in the last 30 days is ~7× less likely
-const WEAK_POINT_CHANCE = 0.3; // how often the grammar comes from the learner's own mistakes
 
 interface Brief {
   topic: string;
@@ -103,14 +118,9 @@ function makeBrief(rand: () => number): Brief {
   const usedGrammar = new Set(recent.map((r) => r.grammar));
   const fresh = (used: Set<string>) => (x: string) => (used.has(x) ? RECENT_WEIGHT : 1);
 
-  const weak = records.weakPoints(8, 60);
-  const grammar =
-    weak.length && rand() < WEAK_POINT_CHANCE
-      ? pickWeighted(rand, weak, (w) => w.n * (usedGrammar.has(w.point) ? RECENT_WEIGHT : 1)).point
-      : pickWeighted(rand, GRAMMAR, fresh(usedGrammar));
   return {
     topic: pickWeighted(rand, TOPICS, fresh(usedTopics)),
-    grammar,
+    grammar: pickWeighted(rand, GRAMMAR, fresh(usedGrammar)),
     type: pickWeighted(rand, TYPES, () => 1),
     politeness: pickWeighted(rand, POLITENESS, () => 1),
     length: pickWeighted(rand, LENGTHS, () => 1),
@@ -183,7 +193,6 @@ async function create(kind: "daily" | "extra", day: string, baseSeed: number): P
       const { lastInsertRowid } = db
         .prepare("INSERT INTO challenges (at, day, kind, seed, topic, grammar, style, zh, ja) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(Date.now(), day, kind, seed, brief.topic, brief.grammar, style, s.zh, s.ja);
-      records.noteChanged(day);
       return { id: Number(lastInsertRowid), kind, day, zh: s.zh, topic: brief.topic, grammar: brief.grammar };
     } catch (err) {
       lastErr = err;
@@ -200,6 +209,7 @@ interface Row {
   ja: string;
   topic: string;
   grammar: string;
+  style: string;
 }
 const toChallenge = ({ id, kind, day, zh, topic, grammar }: Row): Challenge => ({ id, kind, day, zh, topic, grammar });
 
@@ -222,20 +232,13 @@ export async function current(): Promise<ChallengeState> {
   const day = localDay();
   await ensureDaily(day);
   const row = db.prepare("SELECT * FROM challenges WHERE day = ? ORDER BY at DESC, id DESC LIMIT 1").get(day) as unknown as Row;
-  return { challenge: toChallenge(row), last: lastResult(row.id) };
+  return { challenge: toChallenge(row) };
 }
 
 /** A fresh on-demand challenge with a random seed. */
 export async function fresh(): Promise<ChallengeState> {
   const c = await create("extra", localDay(), randomInt(2 ** 31));
-  return { challenge: c, last: null };
-}
-
-function lastResult(id: number): ChallengeResult | null {
-  const row = db.prepare("SELECT result FROM challenge_attempts WHERE challenge_id = ? ORDER BY at DESC LIMIT 1").get(id) as
-    | { result: string }
-    | undefined;
-  return row ? (JSON.parse(row.result) as ChallengeResult) : null;
+  return { challenge: c };
 }
 
 // ── scoring ─────────────────────────────────────────────────────────────────
@@ -336,23 +339,10 @@ export async function grade(id: number, answer: string): Promise<ChallengeResult
   };
   result.total = result.meaning + result.grammar + result.naturalness;
 
-  // Grammar mistakes join the learning record (review list, grammar notes, future weak-point challenges),
-  // and a translated sentence counts as practice, so it feeds the cat like a spoken one.
-  const grammarMistakes = mistakes.filter((m) => GRAMMAR_KINDS.has(m.type)) as Mistake[];
-  const turnId = records.logTurn(answer, { is_correct: grammarMistakes.length === 0, corrected: result.corrected, mistakes: grammarMistakes, natural: "" });
+  // The whole attempt (scores, every mistake, comment) goes to the day's note.
+  // A translated sentence counts as practice, so it feeds the cat.
+  records.logTranslation(row, result);
+  const grammarMistakes = mistakes.filter((m) => GRAMMAR_KINDS.has(m.type));
   pet.recordPractice(answer, grammarMistakes.length === 0, grammarMistakes.length);
-
-  // The whole attempt (every mistake, scores, comment) is kept here and written to the daily note.
-  const at = Date.now();
-  db.prepare("INSERT INTO challenge_attempts (challenge_id, turn_id, at, day, answer, total, result) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-    id,
-    turnId,
-    at,
-    localDay(at),
-    answer,
-    result.total,
-    JSON.stringify(result),
-  );
-  records.noteChanged(localDay(at));
   return result;
 }
