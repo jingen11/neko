@@ -14,7 +14,7 @@
  *   confirm {text}                      (browser: after the user checks/edits it; board: immediately)
  *   ← state {anim:"think"}
  *   ← say {ja, en, mood} → audio_start → [binary voice frames] → audio_end
- *   ← correction {...}                  (usually arrives a little after the pet starts talking)
+ *   ← correction {...}                  (ねこ's own check, asked for alongside the reply; usually arrives a little after)
  *   ← state {...}                       (stats updated: practising feeds the pet)
  *
  * Grammar question (answered by Hermes from the learner's vault record, or by the local model):
