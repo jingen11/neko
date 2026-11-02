@@ -9,7 +9,7 @@ import { transcribe } from "./stt.ts";
 import { speak } from "./tts.ts";
 import { answerQuestion } from "./ask.ts";
 import * as records from "./records.ts";
-import { checkSentence, petReply, type Correction, type PetReply } from "./tutor.ts";
+import { petTurn } from "./tutor.ts";
 
 /**
  * The pet's "brain" for connected clients (browser now, ESP32 board later).
@@ -97,40 +97,24 @@ async function onListenEnd(c: Client) {
   send(c, { type: "heard", text: r.text, ms: r.ms });
 }
 
-/** One conversation turn: ねこ's reply and ねこ's check of the sentence are asked for at the same time. */
+/** One conversation turn: ねこ replies and checks the sentence in one answer, then speaks. */
 async function onConfirm(c: Client, text: string) {
   text = text.trim();
   if (!text) return;
   if (c.busy) return send(c, { type: "error", message: "The pet is still thinking about your last sentence." });
   c.busy = true;
   setState("think", "curious", 60_000);
-  const turn = [...history.slice(-12), { role: "user" as const, content: text }];
-  const t0 = performance.now();
-  let reply: PetReply | undefined;
-  let correction: Correction | undefined;
-  // allSettled: if one half fails, the other still finishes and the turn is still recorded
-  const results = await Promise.allSettled([
-    petReply(turn).then(async ({ data, ms }) => {
-      reply = data;
-      history.push({ role: "user", content: text }, { role: "assistant", content: data.ja });
-      history.splice(0, Math.max(0, history.length - 24));
-      log.info(`reply ${ms}ms`);
-      await say(c, data.ja, data.en, data.mood);
-      log.info(`pet speaking after ${Math.round(performance.now() - t0)}ms`);
-    }),
-    checkSentence(turn).then(({ data, ms }) => {
-      correction = data;
-      log.info(`check ${ms}ms`);
-      send(c, { type: "correction", text, ...data });
-      pet.recordPractice(text, data.is_correct, data.mistakes.length);
-      if (revertTimer) eatNext = true; // still talking: eat afterwards
-      else setState("eat", "happy", 1800);
-    }),
-  ]);
   try {
-    if (correction) records.logTurn(text, correction, reply);
-    const failed = results.find((r) => r.status === "rejected");
-    if (failed) throw failed.reason;
+    const { reply, correction, ms } = await petTurn([...history.slice(-12), { role: "user", content: text }]);
+    log.info({ said: text, reply: reply.ja, mistakes: correction.mistakes }, `reply + check ${ms}ms`);
+    history.push({ role: "user", content: text }, { role: "assistant", content: reply.ja });
+    history.splice(0, Math.max(0, history.length - 24));
+    send(c, { type: "correction", text, ...correction });
+    pet.recordPractice(text, correction.is_correct, correction.mistakes.length);
+    records.logTurn(text, correction, reply);
+    await say(c, reply.ja, reply.en, reply.mood);
+    if (revertTimer) eatNext = true; // still talking: eat afterwards
+    else setState("eat", "happy", 1800);
   } catch (err) {
     log.error({ err }, "turn failed");
     send(c, { type: "error", message: (err as Error).message });

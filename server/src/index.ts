@@ -12,7 +12,7 @@ import type { ChatMessage } from "./llm.ts";
 import { rebuildVault } from "./records.ts";
 import { int16ToFloat32, transcribe } from "./stt.ts";
 import { listVoices, speak } from "./tts.ts";
-import { checkSentence, petReply } from "./tutor.ts";
+import { petTurn } from "./tutor.ts";
 import { saveRecording, score, testCases } from "./voicetest.ts";
 
 const app = Fastify({ logger: { level: process.env.NEKO_LOG_LEVEL ?? "info" }, disableRequestLogging: true, bodyLimit: 20 * 1024 * 1024 });
@@ -45,10 +45,9 @@ const cleanHistory = (h?: ChatMessage[]) => (h ?? []).filter((m) => m.role === "
 app.post<TurnBody>("/api/reply", async (req, reply) => {
   const text = req.body?.text?.trim();
   if (!text) return reply.code(400).send({ error: "text is required" });
-  const turn = [...cleanHistory(req.body.history), { role: "user" as const, content: text }];
-  const [pet, check] = await Promise.all([petReply(turn), checkSentence(turn)]);
-  req.log.info(`reply ${pet.ms}ms, check ${check.ms}ms`);
-  return { ...pet.data, correction: check.data, ms: Math.max(pet.ms, check.ms) };
+  const turn = await petTurn([...cleanHistory(req.body.history), { role: "user", content: text }]);
+  req.log.info(`reply + check ${turn.ms}ms`);
+  return { ...turn.reply, correction: turn.correction, ms: turn.ms };
 });
 
 // ── translation challenge (see shared/protocol.ts) ──
