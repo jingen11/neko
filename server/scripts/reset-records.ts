@@ -59,7 +59,8 @@ if (oldTables.length || pet) {
   console.log(`\ndatabase backed up to ${backup}`);
   for (const t of oldTables) db.exec(`DROP TABLE ${t}`);
   if (pet) {
-    db.exec("DELETE FROM practice");
+    // practice_days now; "practice" (one row per sentence) in older versions
+    for (const t of ["practice_days", "practice"]) if (tables.includes(t)) db.exec(`DELETE FROM ${t}`);
     db.prepare("UPDATE pet SET hunger = 30, happiness = 70, updated_at = ? WHERE id = 1").run(Date.now());
   }
 }

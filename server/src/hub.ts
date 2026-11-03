@@ -110,7 +110,7 @@ async function onConfirm(c: Client, text: string) {
     history.push({ role: "user", content: text }, { role: "assistant", content: reply.ja });
     history.splice(0, Math.max(0, history.length - 24));
     send(c, { type: "correction", text, ...correction });
-    pet.recordPractice(text, correction.is_correct, correction.mistakes.length);
+    pet.recordPractice(correction.is_correct);
     records.logTurn(text, correction, reply);
     await say(c, reply.ja, reply.en, reply.mood);
     if (revertTimer) eatNext = true; // still talking: eat afterwards
