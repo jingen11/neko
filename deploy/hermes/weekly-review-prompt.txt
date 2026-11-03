@@ -1,0 +1,19 @@
+Write my weekly Japanese review.
+
+My practice record is in ~/vault/Japanese/Daily/, one note per day named <YYYY-MM-DD>.md. Read the notes for the last 7 days, ending today. Each note is a list of entries. Every entry starts with a "### HH:MM:SS · <kind>" heading followed by "- Label: value" lines:
+- "Said ✓" or "Said ✗": a sentence I said to my cat. "Said" is what I said, "Fixed" is the corrected sentence, "More natural" is how a native would say it, and each "Mistake (<type>)" line is: wrong part → fix · grammar point · why. "ねこ replied" is the cat's answer.
+- "Translation <score>/100": a Chinese-to-Japanese challenge. It has the Chinese, the reference answer, my answer, the score breakdown, the corrected answer, every mistake (types "meaning" and "omission" are about meaning, not grammar) and a comment.
+- "Listening": a line I needed help with. It says whether I asked to hear it again, asked to hear it slowly, or looked at the English.
+- "Question": a question I asked, with the answer quoted below it.
+- "Review ✓" or "Review ✗": me practising an earlier mistake. It gives the grammar point, the sentence I was fixing and my answer.
+Some days may have no note. Ignore anything that isn't in this shape.
+
+Write the review to ~/vault/Japanese/Notes/Weekly/<today's date>.md, with these sections:
+1. The week in numbers: sentences said and how many were correct, translations and their average score, listening misses, questions asked, and review practice (right out of tried).
+2. Focus grammar points: the 2 or 3 points I got wrong most often. Treat differently worded names for the same point as one point. For each one, explain the rule simply, quote my own wrong sentences with their fixes and dates, and add new N4-level example sentences.
+3. Review practice: which points I practised and whether I got them right, and which frequent mistakes I haven't practised yet.
+4. Listening trouble spots: the lines I needed help with, and what they have in common.
+5. Questions I asked: one line each on what I wanted to know.
+6. Sentences to try on the cat: 5 short N4-level sentences that use the focus points.
+
+Write in English, with Japanese for the examples. Leave the daily notes as they are. If there are no notes for the week, write a short note saying so.

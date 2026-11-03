@@ -50,7 +50,7 @@ Answers come back in the language the question was written in (English, Chinese,
 
 ### Weekly review (Hermes cron)
 
-A Hermes cron job, "neko weekly Japanese review", runs **Sundays at 20:00** (`HERMES_TIMEZONE=Asia/Kuala_Lumpur` in `~/.hermes/.env`) on the local model. It reads the week's notes and writes `~/vault/Japanese/Notes/Weekly/<date>.md`: the week in numbers, 2–3 focus grammar points with your own wrong sentences and new examples, listening trouble spots, and sentences to try on the pet. Manage it with `hermes cron list` / `hermes cron run <id>` / `hermes cron edit <id>`.
+A Hermes cron job, "neko weekly Japanese review", runs **Sundays at 20:00** (`HERMES_TIMEZONE=Asia/Kuala_Lumpur` in `~/.hermes/.env`) on the local model. It reads the week's daily notes and writes `~/vault/Japanese/Notes/Weekly/<date>.md`: the week in numbers, 2–3 focus grammar points with your own wrong sentences and new examples, review practice, listening trouble spots, the questions you asked, and sentences to try on the pet. Its prompt is kept in [`deploy/hermes/weekly-review-prompt.txt`](deploy/hermes/weekly-review-prompt.txt); it explains the daily note format, so update it when that format changes. Manage the job with `hermes cron list` / `hermes cron run <id>` / `hermes cron edit <id>` (see `hermes cron edit --help` for the flag that sets the prompt).
 
 ### Starting the speech-to-text server
 
