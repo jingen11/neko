@@ -42,4 +42,7 @@ export const config = {
   mqttUsername: process.env.MQTT_USERNAME ?? "",
   mqttPassword: process.env.MQTT_PASSWORD ?? "",
   mqttBaseTopic: trim(process.env.MQTT_BASE_TOPIC ?? "zigbee2mqtt"),
+  /** Zigbee2MQTT friendly names of the home sensors (sensors.ts). */
+  doorSensor: process.env.NEKO_DOOR_SENSOR || "front_door",
+  windowSensor: process.env.NEKO_WINDOW_SENSOR || "front_window_1",
 };

@@ -22,7 +22,7 @@ neko is a Fastify server that calls these local services:
 | sherpa-onnx offline WebSocket server | `ws://127.0.0.1:6006` | Japanese speech-to-text (ReazonSpeech or SenseVoice) |
 | VOICEVOX engine | `http://127.0.0.1:50021` | The pet's voice |
 | Hermes Agent API server | `http://127.0.0.1:8642` | Questions (grammar on Claude, casual on the local model), answered from the vault (optional: falls back to llama.cpp) |
-| MQTT broker (Zigbee2MQTT) | `MQTT_URL`, e.g. `mqtt://127.0.0.1:1883` | Home Zigbee devices (optional: off while `MQTT_URL` is empty) |
+| MQTT broker (Zigbee2MQTT) | `MQTT_URL`, e.g. `mqtt://127.0.0.1:1883` | Home sensors: ねこ reacts when the front door opens or the window shakes (optional: off while `MQTT_URL` is empty) |
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
 
@@ -52,6 +52,19 @@ Answers come back in the language the question was written in (English, Chinese,
 ### Weekly review (Hermes cron)
 
 A Hermes cron job, "neko weekly Japanese review", runs **Sundays at 20:00** (`HERMES_TIMEZONE=Asia/Kuala_Lumpur` in `~/.hermes/.env`) on the local model. It reads the week's daily notes and writes `~/vault/Japanese/Notes/Weekly/<date>.md`: the week in numbers, 2–3 focus grammar points with your own wrong sentences and new examples, review practice, listening trouble spots, the questions you asked, and sentences to try on the pet. Its prompt is kept in [`deploy/hermes/weekly-review-prompt.txt`](deploy/hermes/weekly-review-prompt.txt); it explains the daily note format, so update it when that format changes. Manage the job with `hermes cron list` / `hermes cron run <id>` / `hermes cron edit <id>` (see `hermes cron edit --help` for the flag that sets the prompt).
+
+### Home sensors (Zigbee2MQTT)
+
+With `MQTT_URL` set, neko listens to two Zigbee sensors through Zigbee2MQTT. It only listens; it never changes a device.
+
+| Event | Device (friendly name) | Fires when |
+|---|---|---|
+| `front_door_open` | `front_door` (`NEKO_DOOR_SENSOR`) | the door opens: `contact` changes to `false` (at most once per 10 s) |
+| `front_window_1_vibrate` | `front_window_1` (`NEKO_WINDOW_SENSOR`) | the window is hit: `vibration: true` or `action` `vibration` / `tilt` / `drop` (at most once a minute) |
+
+Messages arrive on `zigbee2mqtt/<friendly name>`. Name the devices in Zigbee2MQTT (web page → device → Rename, or a `bridge/request/device/rename` request), or set the two variables to the names they already have. To see what a sensor sends: `mosquitto_sub -h 127.0.0.1 -t 'zigbee2mqtt/#' -v`.
+
+When one fires, every open page (once ねこ is awake) shows a banner on the stage with the time, and ねこ looks up and says a short line about it, even at night. Retained messages replayed on connect, and repeat reports while the door stays open, don't count. Nothing is written to the vault. The events are in `server/src/sensors.ts`; adding a sensor is one entry there and one name in `SensorEvent` (`shared/protocol.ts`).
 
 ### Starting the speech-to-text server
 
@@ -119,6 +132,8 @@ ssh -L 8081:localhost:8081 <box>
 | `HERMES_URL` | `http://127.0.0.1:8642` | Hermes API server |
 | `HERMES_KEY` | (none) | Same as `API_SERVER_KEY` in `~/.hermes/.env`; without it, questions go straight to llama.cpp |
 | `HERMES_MODEL` / `HERMES_PROVIDER` | `claude-opus-5-5` / `anthropic` | Model Hermes answers grammar questions with; both empty = Hermes's default model |
+| `MQTT_URL` | (none) | MQTT broker Zigbee2MQTT uses, e.g. `mqtt://127.0.0.1:1883`; empty = no sensors. `MQTT_USERNAME` / `MQTT_PASSWORD` if it needs a login, `MQTT_BASE_TOPIC` (`zigbee2mqtt`) |
+| `NEKO_DOOR_SENSOR` / `NEKO_WINDOW_SENSOR` | `front_door` / `front_window_1` | Zigbee2MQTT names of the [home sensors](#home-sensors-zigbee2mqtt) |
 | `NEKO_DATA_DIR` | `server/data` | SQLite database folder (point it elsewhere for tests) |
 
 ## Learning records
@@ -180,7 +195,8 @@ shared/protocol.ts     WebSocket protocol (server, web app, and later the board)
 server/                Fastify server
   src/                 hub (pet protocol), pet (stats), records (appends to the daily notes),
                        notes (reads the vault for the Notes page), ask (questions via Hermes),
-                       tutor (reply + grammar check), challenge (translation), mqtt (Zigbee2MQTT),
+                       tutor (reply + grammar check), challenge (translation), mqtt (Zigbee2MQTT client),
+                       sensors (door and window events),
                        db, stt, tts, llm, audio, voicetest, index (routes)
   public/lab.html      Phase 1 test page (speech loop + voice test)
   scripts/             STT bake-off, reset-records

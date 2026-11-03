@@ -7,9 +7,10 @@ import { hermesHealth } from "./ask.ts";
 import { padSilence } from "./audio.ts";
 import * as challenge from "./challenge.ts";
 import { config } from "./config.ts";
-import { attach } from "./hub.ts";
+import { attach, sensorAlert } from "./hub.ts";
 import type { ChatMessage } from "./llm.ts";
 import { mqttHealth } from "./mqtt.ts";
+import { startSensors } from "./sensors.ts";
 import { listNotes, readNote } from "./notes.ts";
 import { logReview } from "./records.ts";
 import { int16ToFloat32, transcribe } from "./stt.ts";
@@ -148,5 +149,7 @@ const makeDaily = () => challenge.ensureDaily().catch((err) => app.log.warn(`dai
 makeDaily();
 setInterval(makeDaily, 30 * 60_000).unref();
 
-// Notes are rendered from the database, so rebuilding brings the vault up to date after code changes.
 if (config.vaultDir) app.log.info(`learning records are appended to ${config.vaultDir}/Daily/`);
+
+// Home sensors through Zigbee2MQTT: ねこ reacts when the front door opens or the window shakes.
+if (config.mqttUrl) startSensors(sensorAlert, app.log);

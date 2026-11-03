@@ -9,6 +9,7 @@ import { transcribe } from "./stt.ts";
 import { speak } from "./tts.ts";
 import { answerQuestion, type QuestionKind } from "./ask.ts";
 import * as records from "./records.ts";
+import type { SensorAlert } from "./sensors.ts";
 import { petTurn } from "./tutor.ts";
 
 /**
@@ -63,8 +64,8 @@ setInterval(() => {
   if (clients.size && !revertTimer) setState();
 }, 60_000).unref();
 
-/** The pet says `ja`: text to every client, voice to `to`. */
-async function say(to: Client, ja: string, en: string, mood: Mood, slow = false) {
+/** The pet says `ja`: text to every client, voice to `to` (or to every client when `to` is null). */
+async function say(to: Client | null, ja: string, en: string, mood: Mood, slow = false) {
   const id = randomUUID();
   lastSay = { ja, en, mood };
   recentSays.set(id, { ja, en, revealed: false });
@@ -72,15 +73,27 @@ async function say(to: Client, ja: string, en: string, mood: Mood, slow = false)
   sendAll({ type: "say", id, ja, en, mood });
   const { wav } = await speak(ja, { speed: slow ? 0.75 : undefined });
   const voice = wavToPcm16(wav);
-  const rate = to.hello?.audioRate ?? voice.rate;
-  const pcm = resample(voice.pcm, voice.rate, rate);
-  send(to, { type: "audio_start", sayId: id, rate });
-  for (let i = 0; i < pcm.length; i += AUDIO_CHUNK_SAMPLES) {
-    const chunk = pcm.subarray(i, i + AUDIO_CHUNK_SAMPLES);
-    if (to.ws.readyState === to.ws.OPEN) to.ws.send(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength), { binary: true });
+  let seconds = voice.pcm.length / voice.rate;
+  for (const c of to ? [to] : [...clients]) {
+    const rate = c.hello?.audioRate ?? voice.rate;
+    const pcm = resample(voice.pcm, voice.rate, rate);
+    seconds = pcm.length / rate;
+    send(c, { type: "audio_start", sayId: id, rate });
+    for (let i = 0; i < pcm.length; i += AUDIO_CHUNK_SAMPLES) {
+      const chunk = pcm.subarray(i, i + AUDIO_CHUNK_SAMPLES);
+      if (c.ws.readyState === c.ws.OPEN) c.ws.send(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength), { binary: true });
+    }
+    send(c, { type: "audio_end", sayId: id });
   }
-  send(to, { type: "audio_end", sayId: id });
-  setState("talk", mood, Math.round((pcm.length / rate) * 1000) + 300);
+  setState("talk", mood, Math.round(seconds * 1000) + 300);
+}
+
+/** A home sensor fired (sensors.ts): every client gets a banner, and ねこ looks up and says so, even at night. */
+export async function sensorAlert(a: SensorAlert) {
+  if (!clients.size) return;
+  sendAll({ type: "sensor", event: a.event, device: a.device, label: a.label, at: a.at });
+  setState("listen", "worried", 1500);
+  await say(null, a.ja, a.en, "worried");
 }
 
 async function onListenEnd(c: Client) {

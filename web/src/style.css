@@ -272,6 +272,11 @@ a.chip-btn[aria-disabled="true"] { pointer-events: none; color: var(--muted); }
 .props dt { color: var(--muted); }
 .props dd { margin: 0; }
 
+/* home sensor banner, on the stage above the cat */
+.sensor-alert { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; padding: 10px 12px 10px 14px; border-radius: var(--radius-field); background: var(--pill-negative-bg); color: var(--pill-negative-ink); }
+.sensor-alert ul { flex: 1; min-width: 0; margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; line-height: 1.4; }
+.sensor-alert .chip-btn { flex: none; }
+
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 14px; background: var(--primary); color: var(--on-primary); box-shadow: 0 6px 20px rgb(0 0 0 / .18); z-index: 10; }
 
 /* ---------- tablet ---------- */
