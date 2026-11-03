@@ -35,7 +35,7 @@ neko is a Japanese-learning tamagotchi. The pet lives in a web app on the box, a
 | Weekly review | Hermes cron job | Reads the week's daily notes and writes `Notes/Weekly/<date>.md`. Prompt in `deploy/hermes/weekly-review-prompt.txt`. |
 | Pet state | SQLite | Pet stats, practice days (streak and today's count), generated translation challenges. No learning history. |
 | Learning records | `~/vault/Japanese/Daily/<date>.md` | The only copy. neko appends each event and never reads it back. Hermes and the learner write in `Notes/`. The web app shows only the current visit; the Notes page (`/notes.html`) shows the vault. |
-| Home devices | MQTT → Zigbee2MQTT (optional) | `server/src/mqtt.ts`; off while `MQTT_URL` is empty. |
+| Home sensors | MQTT → Zigbee2MQTT (optional) | `mqtt.ts` wraps the protocol; `sensors.ts` turns device messages into events (`front_door_open`, `front_window_1_vibrate`). neko only subscribes. On an event every client gets a `sensor` message (banner) and ねこ says a line. Off while `MQTT_URL` is empty. |
 | Level | Config `level: N4` (N5–N1) | Limits vocab/grammar in prompts, furigana above level, explanation depth. |
 
 ## Speech-to-text: no auto-correction

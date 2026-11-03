@@ -1,5 +1,5 @@
 import { Application } from "pixi.js";
-import type { AnswerMsg, Anim, CorrectionMsg, Mood, PetStats, ServerMessage } from "../../shared/protocol.ts";
+import type { AnswerMsg, Anim, CorrectionMsg, Mood, PetStats, SensorMsg, ServerMessage } from "../../shared/protocol.ts";
 
 type AskKind = AnswerMsg["kind"];
 import { AudioIO } from "./audio.ts";
@@ -166,6 +166,9 @@ function onMessage(m: ServerMessage) {
     case "answer":
       showAnswer(m);
       break;
+    case "sensor":
+      showSensor(m);
+      break;
     case "error":
       if (pendingAnswer?.classList.contains("wait") && m.message.startsWith("Couldn't answer")) {
         pendingAnswer.remove();
@@ -180,6 +183,26 @@ function onMessage(m: ServerMessage) {
       break;
   }
 }
+
+// ── home sensors: a banner on the stage until dismissed, one line per event ──
+const sensorSeen = new Map<string, { label: string; first: number; last: number; n: number }>();
+function showSensor(m: SensorMsg) {
+  const e = sensorSeen.get(m.event);
+  if (e) {
+    e.n++;
+    e.last = m.at;
+  } else sensorSeen.set(m.event, { label: m.label, first: m.at, last: m.at, n: 1 });
+  const time = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  $("sensorList").innerHTML = [...sensorSeen.values()]
+    .sort((a, b) => b.last - a.last)
+    .map((e) => `<li><strong>${esc(e.label)}</strong> · ${e.n > 1 ? `${e.n} times, ${time(e.first)}–${time(e.last)}` : time(e.last)}</li>`)
+    .join("");
+  $("sensorAlert").hidden = false;
+}
+$("sensorClose").addEventListener("click", () => {
+  sensorSeen.clear();
+  $("sensorAlert").hidden = true;
+});
 
 // ── push to talk ─────────────────────────────────────────────
 async function startTalk() {

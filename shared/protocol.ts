@@ -165,7 +165,19 @@ export interface ErrorMsg {
   message: string;
 }
 
-export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | AnswerMsg | ErrorMsg;
+/** Home sensor events (through Zigbee2MQTT). */
+export type SensorEvent = "front_door_open" | "front_window_1_vibrate";
+
+/** A home sensor fired. ねこ also says a line about it (a normal "say"). */
+export interface SensorMsg {
+  type: "sensor";
+  event: SensorEvent;
+  device: string; // the Zigbee2MQTT device
+  label: string; // e.g. "Front door opened"
+  at: number; // ms since epoch
+}
+
+export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | AnswerMsg | ErrorMsg | SensorMsg;
 
 // ── translation challenge (HTTP, not the WebSocket) ──────────────────────────
 //   GET  /api/challenge              → ChallengeState   today's current challenge (the daily one is made on first request)

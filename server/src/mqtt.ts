@@ -27,7 +27,11 @@ export interface Device {
   [key: string]: unknown;
 }
 
-type StateListener = (device: string, state: DeviceState) => void;
+/** `retained` is true for a stored message the broker replays on connect (an old state, not something that just happened). */
+export interface StateInfo {
+  retained: boolean;
+}
+type StateListener = (device: string, state: DeviceState, info: StateInfo) => void;
 
 const base = config.mqttBaseTopic;
 const devices = new Map<string, Device>(); // by friendly name
@@ -40,7 +44,7 @@ let client: MqttClient | null = null;
 
 const BRIDGE = `${base}/bridge/`;
 
-function onMessage(topic: string, payload: Buffer) {
+function onMessage(topic: string, payload: Buffer, retained = false) {
   if (!topic.startsWith(`${base}/`)) return;
   const rest = topic.slice(base.length + 1);
   const text = payload.toString();
@@ -83,7 +87,7 @@ function onMessage(topic: string, payload: Buffer) {
   for (const l of listeners) {
     if (l.device === null || l.device === rest) {
       try {
-        l.fn(rest, data as DeviceState);
+        l.fn(rest, data as DeviceState, { retained });
       } catch (err) {
         console.warn(`mqtt listener for ${rest} threw: ${(err as Error).message}`);
       }
@@ -103,7 +107,7 @@ export function connect(): MqttClient {
     connectTimeout: 10_000,
   });
   client.on("connect", () => client!.subscribe(`${base}/#`));
-  client.on("message", onMessage);
+  client.on("message", (topic, payload, packet) => onMessage(topic, payload, packet.retain));
   client.on("error", (err) => console.warn(`mqtt: ${err.message}`));
   return client;
 }
