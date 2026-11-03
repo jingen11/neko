@@ -37,4 +37,9 @@ export const config = {
   /** Model Hermes uses for grammar questions; both empty = Hermes's own default model. */
   hermesModel: process.env.HERMES_MODEL ?? "claude-opus-5-5",
   hermesProvider: process.env.HERMES_PROVIDER ?? "anthropic",
+  /** MQTT broker that Zigbee2MQTT publishes to. Empty = MQTT off. */
+  mqttUrl: process.env.MQTT_URL ?? "",
+  mqttUsername: process.env.MQTT_USERNAME ?? "",
+  mqttPassword: process.env.MQTT_PASSWORD ?? "",
+  mqttBaseTopic: trim(process.env.MQTT_BASE_TOPIC ?? "zigbee2mqtt"),
 };

@@ -9,6 +9,7 @@ import * as challenge from "./challenge.ts";
 import { config } from "./config.ts";
 import { attach } from "./hub.ts";
 import type { ChatMessage } from "./llm.ts";
+import { mqttHealth } from "./mqtt.ts";
 import { listNotes, readNote } from "./notes.ts";
 import { logReview } from "./records.ts";
 import { int16ToFloat32, transcribe } from "./stt.ts";
@@ -135,6 +136,7 @@ app.get("/api/health", async () => {
     }),
     check("stt", () => transcribe(new Float32Array(1600), 16000)),
     check("hermes", hermesHealth),
+    ...(config.mqttUrl ? [check("zigbee2mqtt", mqttHealth)] : []),
   ]);
   return { level: config.level, ...Object.fromEntries(results) };
 });
