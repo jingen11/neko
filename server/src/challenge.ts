@@ -343,6 +343,6 @@ export async function grade(id: number, answer: string): Promise<ChallengeResult
   // A translated sentence counts as practice, so it feeds the cat.
   records.logTranslation(row, result);
   const grammarMistakes = mistakes.filter((m) => GRAMMAR_KINDS.has(m.type));
-  pet.recordPractice(answer, grammarMistakes.length === 0, grammarMistakes.length);
+  pet.recordPractice(grammarMistakes.length === 0);
   return result;
 }

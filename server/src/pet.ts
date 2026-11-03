@@ -22,16 +22,25 @@ db.exec(`
     happiness REAL NOT NULL,
     updated_at INTEGER NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS practice (
-    at INTEGER NOT NULL,
-    day TEXT NOT NULL,
-    text TEXT NOT NULL,
-    correct INTEGER NOT NULL,
-    mistakes INTEGER NOT NULL
+  -- how many sentences you practised each day: enough for the streak and today's count.
+  -- What you said lives only in the vault.
+  CREATE TABLE IF NOT EXISTS practice_days (
+    day TEXT PRIMARY KEY,
+    n INTEGER NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS practice_day ON practice(day);
   INSERT OR IGNORE INTO pet (id, hunger, happiness, updated_at) VALUES (1, 30, 70, ${Date.now()});
 `);
+
+// Older versions kept every sentence in a "practice" table: keep its counts per day, drop the text.
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'practice'").get()) {
+  db.exec(`
+    BEGIN;
+    INSERT INTO practice_days (day, n) SELECT day, COUNT(*) FROM practice GROUP BY day
+      ON CONFLICT(day) DO UPDATE SET n = n + excluded.n;
+    DROP TABLE practice;
+    COMMIT;
+  `);
+}
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n));
 const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: config.tz, year: "numeric", month: "2-digit", day: "2-digit" });
@@ -64,7 +73,7 @@ function save(r: Row) {
 }
 
 function streak(): number {
-  const days = (db.prepare("SELECT DISTINCT day FROM practice ORDER BY day DESC LIMIT 400").all() as { day: string }[]).map((r) => r.day);
+  const days = (db.prepare("SELECT day FROM practice_days WHERE n > 0 ORDER BY day DESC LIMIT 400").all() as { day: string }[]).map((r) => r.day);
   if (!days.length) return 0;
   const oneDay = 86_400_000;
   // The streak is alive if you practised today or yesterday.
@@ -84,13 +93,13 @@ function streak(): number {
 
 export function stats(): PetStats {
   const r = load();
-  const today = db.prepare("SELECT COUNT(*) AS n FROM practice WHERE day = ?").get(localDay()) as { n: number };
+  const today = db.prepare("SELECT n FROM practice_days WHERE day = ?").get(localDay()) as { n: number } | undefined;
   return {
     name: config.petName,
     hunger: Math.round(r.hunger),
     happiness: Math.round(r.happiness),
     streak: streak(),
-    practicedToday: today.n,
+    practicedToday: today?.n ?? 0,
     level: config.level,
   };
 }
@@ -122,14 +131,13 @@ export function restingAnim(mood: Mood, s = stats()): Anim {
   return "idle";
 }
 
-/** A practice turn feeds the pet. */
-export function recordPractice(text: string, correct: boolean, mistakes: number) {
+/** A practice turn feeds the pet, and counts towards today. */
+export function recordPractice(correct: boolean) {
   const r = load();
   r.hunger = clamp(r.hunger - FEED_PER_TURN);
   r.happiness = clamp(r.happiness + JOY_PER_TURN + (correct ? JOY_CORRECT_BONUS : 0));
   save(r);
-  const now = Date.now();
-  db.prepare("INSERT INTO practice (at, day, text, correct, mistakes) VALUES (?, ?, ?, ?, ?)").run(now, localDay(now), text, correct ? 1 : 0, mistakes);
+  db.prepare("INSERT INTO practice_days (day, n) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1").run(localDay());
 }
 
 let lastPetAt = 0;

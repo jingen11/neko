@@ -8,7 +8,7 @@ Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 - **Phase 1 — speech loop: done.** Speech-to-text (ReazonSpeech) keeps learner mistakes (12/12 with a real voice); correction + pet reply via Qwen3.6; VOICEVOX voice. Test page at `/lab.html`.
 - **Phase 2 — the pet: done.** PixiJS cat at `/` (sample screen at `/?demo`, animation switch at `/?debug`), WebSocket protocol (`shared/protocol.ts`) that the ESP32 board will also use, pet stats (hunger, happiness, streak) in SQLite.
-- **Phase 3 — learning records + grammar Q&A: in progress.** Every sentence, correction, listening miss and question is written to `~/vault/Japanese/` (see [Learning records](#learning-records)). **Ask grammar** in the composer (or **Ask about this** on a review card) sends a grammar question to Hermes on Claude. **Ask Hermes** sends anything else (chat, "what have I learnt this week?") to Hermes on its local model. Hermes reads those notes either way; if it's down, the pet's own model answers.
+- **Phase 3 — learning records + questions: built, being checked on the box.** Every sentence, correction, translation, listening miss, question and review attempt is appended to the day's note in `~/vault/Japanese/` (see [Learning records](#learning-records)); the **Notes** page shows them, and Hermes writes a weekly review. **Ask grammar** in the composer (or **Ask about this** on a review card) sends a grammar question to Hermes on Claude. **Ask Hermes** sends anything else (chat, "what have I learnt this week?") to Hermes on its local model. Hermes reads those notes either way; if it's down, the pet's own model answers.
 
 Later phases: ESP32-S3 firmware, away-from-home access.
 
@@ -18,10 +18,11 @@ neko is a Fastify server that calls these local services:
 
 | Service | Default URL | What for |
 |---|---|---|
-| llama.cpp (Qwen3.6) | `http://127.0.0.1:8080` | Grammar correction and pet replies (thinking off, JSON output) |
+| llama.cpp (Qwen3.6) | `http://127.0.0.1:8080` | Pet replies with the grammar check in the same answer, translation challenges (thinking off, JSON output) |
 | sherpa-onnx offline WebSocket server | `ws://127.0.0.1:6006` | Japanese speech-to-text (ReazonSpeech or SenseVoice) |
 | VOICEVOX engine | `http://127.0.0.1:50021` | The pet's voice |
 | Hermes Agent API server | `http://127.0.0.1:8642` | Questions (grammar on Claude, casual on the local model), answered from the vault (optional: falls back to llama.cpp) |
+| MQTT broker (Zigbee2MQTT) | `MQTT_URL`, e.g. `mqtt://127.0.0.1:1883` | Home Zigbee devices (optional: off while `MQTT_URL` is empty) |
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
 
@@ -122,7 +123,7 @@ ssh -L 8081:localhost:8081 <box>
 
 ## Learning records
 
-The Obsidian vault is the only copy of your learning record. neko appends each event to the day's note in `~/vault/Japanese/` once, and never reads, rewrites or rebuilds it. Hermes (or you) can reorganise the vault freely:
+The Obsidian vault is the only copy of your learning record. neko appends each event to the day's note in `~/vault/Japanese/` once, and never rewrites or rebuilds it (it reads the vault only to show the Notes page). Hermes (or you) can reorganise the vault freely:
 
 ```
 Daily/<date>.md          every sentence with its fix and the pet's reply, translations, listening misses, questions, review practice
@@ -177,12 +178,15 @@ To test with **your own voice**, open the **Voice test** tab in the web page: it
 docs/ARCHITECTURE.md   design and decisions
 shared/protocol.ts     WebSocket protocol (server, web app, and later the board)
 server/                Fastify server
-  src/                 hub (pet protocol), pet (stats), records (learning records + vault notes),
-                       ask (grammar questions via Hermes), tutor (correction + reply), db,
-                       stt, tts, llm, audio, voicetest, index (routes)
+  src/                 hub (pet protocol), pet (stats), records (appends to the daily notes),
+                       notes (reads the vault for the Notes page), ask (questions via Hermes),
+                       tutor (reply + grammar check), challenge (translation), mqtt (Zigbee2MQTT),
+                       db, stt, tts, llm, audio, voicetest, index (routes)
   public/lab.html      Phase 1 test page (speech loop + voice test)
-  scripts/             STT bake-off
-  data/                SQLite database (pet + records) and voice-test recordings (not in git)
-web/                   PixiJS pet app (Vite); build output in web/dist
+  scripts/             STT bake-off, reset-records
+  experiment.md        results of the grammar-checking experiment
+  data/                SQLite database (pet stats, streak, challenges) and voice-test recordings (not in git)
+web/                   PixiJS pet app (Vite): index.html (practice), notes.html (Notes); build output in web/dist
 deploy/systemd/        service units
+deploy/hermes/         Hermes weekly review prompt
 ```

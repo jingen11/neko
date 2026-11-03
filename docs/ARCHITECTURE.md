@@ -5,8 +5,10 @@ neko is a Japanese-learning tamagotchi. The pet lives in a web app on the box, a
 ## Features
 
 1. **Listening** — the pet speaks Japanese (TTS) at your level; comprehension misses are recorded.
-2. **Speaking** — you talk to the pet; it answers in character and gives a separate grammar correction card.
-3. **Grammar questions** — ask about grammar you've learnt; answered by Hermes using your vault history.
+2. **Speaking** — you talk to the pet; it answers in character and checks your grammar in the same answer, shown as a correction card.
+3. **Translation** — a Chinese sentence to put into Japanese, on a random grammar point at your level; scored with a corrected answer.
+4. **Review** — this visit's mistakes grouped by grammar point; practise fixing them and the pet checks you.
+5. **Questions** — grammar questions go to Hermes on Claude; anything else ("what have I learnt this week?") goes to Hermes on the local model. Hermes reads the vault for both.
 
 ## System
 
@@ -16,9 +18,9 @@ neko is a Japanese-learning tamagotchi. The pet lives in a web app on the box, a
   (mic/speaker/touch)  WS  │  ├─ pet engine (mood, hunger, streak) ── SQLite  │
                            │  ├─ STT  sherpa-onnx server (native, own service)│
  browser (PixiJS pet)  ◀──▶│  ├─ TTS  VOICEVOX engine (:50021)                │
-                           │  ├─ llama.cpp :8080 — pet chat + corrections     │
-                           │  ├─ Hermes API — grammar Q&A                     │
-                           │  └─ learning records ──▶ ~/vault/Japanese/       │
+                           │  ├─ llama.cpp :8080 — pet reply + grammar check  │
+                           │  ├─ Hermes API :8642 — questions, weekly review  │
+                           │  └─ learning records ──▶ ~/vault/Japanese/ (md)  │
                            └──────────────────────────────────────────────────┘
 ```
 
@@ -28,11 +30,12 @@ neko is a Japanese-learning tamagotchi. The pet lives in a web app on the box, a
 | Backend | Node + TypeScript, Fastify, `@fastify/websocket` | No Hono. |
 | Speech → text | sherpa-onnx **native binary** (prebuilt `sherpa-onnx-offline-websocket-server`), run as a systemd service | neko talks to it over a local WebSocket. No Node native bindings. Candidates below; must not "fix" learner grammar. |
 | Text → speech | VOICEVOX engine (native Linux CPU build, :50021) | Free; credit `VOICEVOX:<character>`. Real Japanese reading/accent dictionary (OpenJTalk). Load only the pet's one voice to keep RAM down. 24 kHz → resample to 16 kHz for board. |
-| Pet chat | llama.cpp Qwen3.6, thinking **off** | Low latency, stays in character. |
-| Grammar correction | llama.cpp Qwen3.6, JSON output | Separate call from the chat reply. Frontier model is a possible later upgrade. |
-| Grammar Q&A | Hermes Agent API server | Reads vault mistakes; writes grammar notes (llm-wiki). |
-| Pet state | SQLite | |
-| Learning records | `~/vault/Japanese/` | neko renders `Index.md`, `Daily/`, `Grammar/` from SQLite (overwritten); Hermes and the learner write in `Notes/`. |
+| Pet reply + grammar check | llama.cpp Qwen3.6, thinking **off**, one JSON answer (temperature 0.7) | The reply comes first (ja, en, mood), then the mistakes, corrected and natural sentences. Doing both in one call beat a separate teacher call: a separate checker invented mistakes, and thinking on was right but took 75–124 s (see `server/experiment.md`). Fixes that change nothing or change the meaning are dropped in code. |
+| Questions | Hermes Agent API server | `ask_grammar` → Claude Opus 5.5 through Hermes; `ask_casual` → Hermes's default local model. Hermes reads the vault itself. If Hermes is down, llama.cpp answers. |
+| Weekly review | Hermes cron job | Reads the week's daily notes and writes `Notes/Weekly/<date>.md`. Prompt in `deploy/hermes/weekly-review-prompt.txt`. |
+| Pet state | SQLite | Pet stats, practice days (streak and today's count), generated translation challenges. No learning history. |
+| Learning records | `~/vault/Japanese/Daily/<date>.md` | The only copy. neko appends each event and never reads it back. Hermes and the learner write in `Notes/`. The web app shows only the current visit; the Notes page (`/notes.html`) shows the vault. |
+| Home devices | MQTT → Zigbee2MQTT (optional) | `server/src/mqtt.ts`; off while `MQTT_URL` is empty. |
 | Level | Config `level: N4` (N5–N1) | Limits vocab/grammar in prompts, furigana above level, explanation depth. |
 
 ## Speech-to-text: no auto-correction
@@ -90,8 +93,8 @@ Decide this before Phase 5.
 ## Build order (riskiest first)
 
 1. **Speech loop in the browser** — mic → STT bake-off → correction → VOICEVOX → playback. Measure latency and memory.
-2. **Pet engine + PixiJS pet + WebSocket protocol**, browser as the first client. *(In progress: protocol in `shared/protocol.ts`; pet drawn from pixel-art GIFs (`web/public/pet/<anim>.gif`, anchored at the feet automatically; drowsy hour around bedtime with yawns, sick when starving, grumpy if petted awake at night); stats in SQLite — practising feeds the pet, petting cheers it up, it sleeps 23:00–07:00 in `NEKO_TZ`.)*
-3. **Vault learning records + Hermes grammar Q&A.** *(In progress: records in SQLite rendered to `~/vault/Japanese/` (Index, Daily/, Grammar/); listening misses = repeat / slow / opened the English; grammar questions via the Hermes API server (`/v1/chat/completions`, Hermes reads the notes itself) with a llama.cpp fallback. Protocol: `ask` → `answer`, `reveal`.)*
+2. **Pet engine + PixiJS pet + WebSocket protocol**, browser as the first client. *(Done: protocol in `shared/protocol.ts`; pet drawn from pixel-art GIFs (`web/public/pet/<anim>.gif`, anchored at the feet automatically; drowsy hour around bedtime with yawns, sick when starving, grumpy if petted awake at night); stats in SQLite — practising feeds the pet, petting cheers it up, it sleeps 23:00–07:00 in `NEKO_TZ`.)*
+3. **Vault learning records + Hermes grammar Q&A.** *(Built, being checked on the box: every turn, translation, listening miss, question and review attempt is appended to `~/vault/Japanese/Daily/<date>.md`; listening misses = repeat / slow / opened the English; questions via the Hermes API server (`/v1/chat/completions`, Hermes reads the notes itself) with a llama.cpp fallback; Review panel and Notes page; weekly review by Hermes cron. Protocol: `ask_grammar` / `ask_casual` → `answer`, `reveal`.)*
 4. **ESP32-S3 firmware** — WebSocket client, audio via ES8311/ES7210, sprite rendering, touch and IMU.
 5. **Away-from-home access** — see open issue above.
 
