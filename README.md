@@ -21,7 +21,7 @@ neko is a Fastify server that calls these local services:
 | llama.cpp (Qwen3.6) | `http://127.0.0.1:8080` | Pet replies with the grammar check in the same answer, translation challenges (thinking off, JSON output) |
 | sherpa-onnx offline WebSocket server | `ws://127.0.0.1:6006` | Japanese speech-to-text (ReazonSpeech or SenseVoice) |
 | VOICEVOX engine | `http://127.0.0.1:50021` | The pet's voice |
-| Hermes Agent API server | `http://127.0.0.1:8642` | Questions (grammar on Claude, casual on the local model), answered from the vault (optional: falls back to llama.cpp) |
+| Hermes Agent API server | `http://127.0.0.1:8642` | Questions (grammar on Claude, casual on the local model), answered from the vault (required for the Ask box; no fallback) |
 | MQTT broker (Zigbee2MQTT) | `MQTT_URL`, e.g. `mqtt://127.0.0.1:1883` | Home sensors: ねこ reacts when the front door opens or the window shakes (optional: off while `MQTT_URL` is empty) |
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
@@ -38,16 +38,23 @@ Then manage them with `systemctl status|restart neko neko-stt neko-voicevox` and
 
 ### Hermes API server (grammar questions)
 
-Hermes's OpenAI-compatible API is turned on in `~/.hermes/.env` (`API_SERVER_ENABLED=true`, `API_SERVER_KEY=...`); neko sends the same key as `HERMES_KEY` in `server/.env`. Run the Hermes gateway as a boot-time service:
+Every Ask box question goes through Hermes; neko never calls a model directly for them. One Hermes gateway on :8642 serves two profiles, each with its own model and its own API key:
+
+| Profile | Model | Address | Key in `server/.env` |
+|---|---|---|---|
+| `default` | local Qwen (llama.cpp) | `/v1/...` | `HERMES_KEY` = `API_SERVER_KEY` in `~/.hermes/.env` |
+| `pro` | Claude Opus 5.5 (Anthropic) | `/p/pro/v1/...` | `HERMES_PRO_KEY` = `API_SERVER_KEY` in `~/.hermes/profiles/pro/.env` |
+
+The `pro` profile was cloned from `default` (`hermes profile create pro --clone`), then set to `model.provider anthropic` / `model.default claude-opus-5-5`; it needs `ANTHROPIC_API_KEY` in its own `.env`. Run the Hermes gateway as a boot-time service:
 
 ```bash
 sudo hermes gateway install --system --run-as-user jedev --start-now
 curl http://127.0.0.1:8642/health      # {"status": "ok", ...}
 ```
 
-There are two WebSocket messages. `ask_grammar` (**Ask grammar**) has Hermes answer with **Claude Opus 5.5** (`HERMES_MODEL` / `HERMES_PROVIDER`), which needs `ANTHROPIC_API_KEY` in `~/.hermes/.env`. `ask_casual` (**Ask Hermes**) names no model, so Hermes answers with its own default model, the local Qwen; it's for chat and questions about your own progress, and allows a longer answer. Hermes's own default model stays the local Qwen, and live corrections stay on llama.cpp. If Hermes or the API is unreachable, llama.cpp answers in ~10 s, marked in the app as "the pet's own model".
+There are two WebSocket messages. `ask_grammar` (**Ask grammar**) goes to the `pro` profile (`HERMES_PRO_PROFILE`), so Claude Opus 5.5 answers. `ask_casual` (**Ask Hermes**) goes to the `default` profile, the local Qwen; it's for chat and questions about your own progress, and allows a longer answer. The pet's live conversation, corrections and challenges stay on llama.cpp directly, for speed. If Hermes is unreachable, the question fails with an error in the app; there is no fallback.
 
-Answers come back in the language the question was written in (English, Chinese, Malay, Japanese, ...): a quick local call names the language first, and the prompt states it outright. The last 4 questions and answers from the past 12 hours go along with each question, so follow-ups like "and what about で?" work. Every answer card shows which model actually wrote it (e.g. "Hermes · Claude Opus 5.5"), taken from Hermes's `runtime` field, so a silent Hermes fallback to another model is visible.
+Answers come back in the language the question was written in (English, Chinese, Malay, Japanese, ...): the prompt says so, and repeats it next to the question. The last 4 questions and answers from the past 12 hours go along with each question, so follow-ups like "and what about で?" work. Each answer card names the profile's model (e.g. "Hermes · Claude Opus 5.5"), from `HERMES_MODEL_LABEL` / `HERMES_PRO_MODEL_LABEL`: Hermes doesn't report which model served a turn, so keep these in line with the profiles.
 
 ### Weekly review (Hermes cron)
 
@@ -130,8 +137,10 @@ ssh -L 8081:localhost:8081 <box>
 | `NEKO_TZ` | box time zone | Your time zone (e.g. `Asia/Tokyo`): the pet sleeps 23:00–07:00 local time, and "today" for the streak |
 | `NEKO_VAULT_DIR` | `~/vault/Japanese` | Where learning records are written; empty turns it off |
 | `HERMES_URL` | `http://127.0.0.1:8642` | Hermes API server |
-| `HERMES_KEY` | (none) | Same as `API_SERVER_KEY` in `~/.hermes/.env`; without it, questions go straight to llama.cpp |
-| `HERMES_MODEL` / `HERMES_PROVIDER` | `claude-opus-5-5` / `anthropic` | Model Hermes answers grammar questions with; both empty = Hermes's default model |
+| `HERMES_KEY` | (none) | `API_SERVER_KEY` of Hermes's default profile (`~/.hermes/.env`); casual questions |
+| `HERMES_PRO_PROFILE` | `pro` | Hermes profile for grammar questions, served at `/p/<profile>/` |
+| `HERMES_PRO_KEY` | (none) | `API_SERVER_KEY` of that profile (`~/.hermes/profiles/<profile>/.env`) |
+| `HERMES_MODEL_LABEL` / `HERMES_PRO_MODEL_LABEL` | `Qwen3.6` / `Claude Opus 5.5` | Model names shown on answer cards (display only) |
 | `MQTT_URL` | (none) | MQTT broker Zigbee2MQTT uses, e.g. `mqtt://127.0.0.1:1883`; empty = no sensors. `MQTT_USERNAME` / `MQTT_PASSWORD` if it needs a login, `MQTT_BASE_TOPIC` (`zigbee2mqtt`) |
 | `NEKO_DOOR_SENSOR` / `NEKO_WINDOW_SENSOR` | `front_door` / `front_window_1` | Zigbee2MQTT names of the [home sensors](#home-sensors-zigbee2mqtt) |
 | `NEKO_DATA_DIR` | `server/data` | SQLite database folder (point it elsewhere for tests) |
