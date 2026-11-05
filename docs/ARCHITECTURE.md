@@ -78,6 +78,19 @@ The board has no GNSS receiver, so location comes from a small external module w
 - **Privacy:** location goes only to the box, over the authenticated WebSocket (see the away-from-home issue). The box keeps the **latest fix in memory only** — no location history, and nothing written to the vault — unless that is decided later.
 - **Uses:** weather for where you are (the Hermes `neko` profile), time zone when travelling, and place-aware practice later (ねこ notices you're at a station or a café and suggests phrases).
 
+### Travelling: the time zone follows the learner (planned)
+
+Today every clock is fixed to the box at home (KL): the box's system zone, `timezone: Asia/Kuala_Lumpur` in each Hermes profile's `config.yaml` (under the multiplexed gateway Hermes ignores `HERMES_TIMEZONE` in `.env`), the time MCP server's `--local-timezone`, and `NEKO_TZ`. neko's requests to Hermes carry no time or place. So away from home, Hermes and ねこ still think it is KL time.
+
+The box keeps its own zone; the **learner's current zone** travels with the board:
+
+1. **Board reports where you are.** From the GPS add-on, or, for the zone alone, something coarser: Wi-Fi positioning or the phone hotspot's IP location (the right country or region is enough). The browser app can also send its own zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`).
+2. **The box works out the zone.** An offline coordinates → IANA zone lookup (no network call) turns `location` into e.g. `Asia/Tokyo`. neko keeps it as the learner's current zone, separate from the box's, with its age; it falls back to `NEKO_TZ` when nothing has been reported.
+3. **neko states it in every Hermes request.** The system message gets a line like "The learner is in Asia/Tokyo; their local time is 21:03 (Thursday)." This overrides the Hermes profile's KL setting for that question, and the model passes the zone to the time tool (`get_current_time("Asia/Tokyo")`). Hermes's own `timezone` stays KL, for cron and the box.
+4. **ねこ follows it too:** bedtime (23:00–07:00) and greetings use the learner's current zone.
+
+**Open decision — the streak while travelling.** Changing zones can repeat or skip a calendar day. Proposed rule: count days in the learner's current zone, but a zone change never breaks the streak (a day lost to a jump counts as kept; a repeated day counts once).
+
 ### Board ↔ box protocol (one WebSocket)
 
 - **Binary frames:** audio, 16 kHz 16-bit mono PCM both directions (~32 KB/s). Opus later if bandwidth matters.
@@ -112,6 +125,7 @@ Decide this before Phase 5.
 4. **ESP32-S3 firmware** — WebSocket client, audio via ES8311/ES7210, sprite rendering, touch and IMU.
 5. **Away-from-home access** — see open issue above.
 6. **GPS add-on** — pick the module and confirm the UART pads from the schematic, wire it, parse NMEA in firmware, send `location` to the box. Needs 4 (firmware) and is only useful after 5 (away from home).
+7. **Time zone follows the learner** — coordinates → zone on the box, the learner's zone in every Hermes request, ねこ's bedtime and greetings in that zone, and the streak rule above. Works with GPS or a coarser location source; the browser can send its zone before the board exists.
 
 ## Constraints
 
