@@ -31,16 +31,13 @@ export const config = {
   dataDir: process.env.NEKO_DATA_DIR ?? path.resolve(import.meta.dirname, "../data"),
   /** Where neko writes learning records for you and Hermes (Obsidian vault folder). Empty string turns it off. */
   vaultDir: process.env.NEKO_VAULT_DIR ?? path.join(os.homedir(), "vault", "Japanese"),
-  /** Hermes Agent API server. Every Ask box question goes through it; it reads the vault. */
+  /** Hermes Agent API server. Grammar questions go through it; it reads the vault. */
   hermesUrl: trim(process.env.HERMES_URL ?? "http://127.0.0.1:8642"),
-  /** Hermes's default profile (local model): casual questions. Key = API_SERVER_KEY in ~/.hermes/.env. */
-  hermesKey: process.env.HERMES_KEY ?? "",
   /** Hermes profile on a frontier model, served at /p/<profile>/: grammar questions. */
   hermesProProfile: process.env.HERMES_PRO_PROFILE ?? "pro",
   /** Key = API_SERVER_KEY in ~/.hermes/profiles/<profile>/.env. */
   hermesProKey: process.env.HERMES_PRO_KEY ?? "",
-  /** Shown on answer cards only. Hermes doesn't report its model, so keep these in line with each profile's config. */
-  hermesModelLabel: process.env.HERMES_MODEL_LABEL ?? "Qwen3.6",
+  /** Shown on answer cards only. Hermes doesn't report its model, so keep this in line with the profile's config. */
   hermesProModelLabel: process.env.HERMES_PRO_MODEL_LABEL ?? "Claude Opus 5.5",
   /** MQTT broker that Zigbee2MQTT publishes to. Empty = MQTT off. */
   mqttUrl: process.env.MQTT_URL ?? "",

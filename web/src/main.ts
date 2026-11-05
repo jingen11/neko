@@ -14,7 +14,6 @@ const textEl = $<HTMLTextAreaElement>("text");
 const talkBtn = $<HTMLButtonElement>("talk");
 const sendBtn = $<HTMLButtonElement>("send");
 const askBtn = $<HTMLButtonElement>("askBtn");
-const chatBtn = $<HTMLButtonElement>("chatBtn");
 const chat = $("chat");
 
 // Mirrors server/src/pet.ts: one practised sentence takes FEED_PER_TURN off hunger; below SAD_BELOW happiness it's sad.
@@ -114,7 +113,7 @@ function setAwake() {
   awake = true;
   $("wakeBtn").hidden = true;
   $("petBtn").hidden = false;
-  for (const el of [talkBtn, sendBtn, askBtn, chatBtn, textEl]) el.disabled = false;
+  for (const el of [talkBtn, sendBtn, askBtn, textEl]) el.disabled = false;
   $("chatEmpty").textContent = "Listening for the first line…";
 }
 
@@ -255,12 +254,9 @@ document.addEventListener("keyup", (e) => {
   }
 });
 
-// ── ask mode: the composer sends a question to Hermes instead of a practice sentence ──
-// Ask grammar → ask_grammar (Hermes on Claude). Ask Hermes → ask_casual (Hermes on its local model), for
-// chat and questions about your own progress ("what have I learnt this week?").
+// ── ask mode: the composer sends a grammar question to Hermes (on Claude) instead of a practice sentence ──
 const ASK = {
   grammar: { btn: askBtn, label: "Grammar question", placeholder: "Ask about grammar, in English or Japanese… e.g. when do I use に vs で?", sr: "Your grammar question" },
-  casual: { btn: chatBtn, label: "Question for Hermes", placeholder: "Ask Hermes anything… e.g. what have I learnt this week?", sr: "Your question for Hermes" },
 } as const;
 
 function setAskMode(kind: AskKind | null) {
@@ -281,7 +277,7 @@ for (const [k, v] of Object.entries(ASK))
 
 function ask(text: string, kind: AskKind = "grammar") {
   if (pendingAnswer) return toast("Still looking into your last question.");
-  net.send({ type: kind === "grammar" ? "ask_grammar" : "ask_casual", text });
+  net.send({ type: "ask_grammar", text });
   $("chatEmpty").hidden = true;
   const q = document.createElement("div");
   q.className = "msg me q";

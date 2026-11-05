@@ -306,7 +306,7 @@ a.chip-btn[aria-disabled="true"] { pointer-events: none; color: var(--muted); }
   .stage-panel { height: 300px; padding: 12px; }
   .keys { display: none; }
   .composer .talk { flex: 1; height: 48px; }
-  .composer #send, .composer #askBtn, .composer #chatBtn { height: 48px; }
+  .composer #send, .composer #askBtn { height: 48px; }
   .zh { font-size: 22px; line-height: 32px; }
   .review-list { grid-template-columns: minmax(0, 1fr); }
 }

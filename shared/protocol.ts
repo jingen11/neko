@@ -17,9 +17,8 @@
  *   ← say {ja, en, mood} → audio_start → [binary voice frames] → audio_end
  *   ← state {...}                       (stats updated: practising feeds the pet)
  *
- * Questions to Hermes, which reads the learner's vault (or the local model, if Hermes is down):
- *   ask_grammar {text}  →  ← state {anim:"think"}  →  ← answer {...}   Hermes on Claude
- *   ask_casual  {text}  →  ← state {anim:"think"}  →  ← answer {...}   Hermes on its local model (chat, "what have I learnt?")
+ * Grammar questions go to Hermes (its pro profile, on Claude), which reads the learner's vault. No fallback:
+ *   ask_grammar {text}  →  ← state {anim:"think"}  →  ← answer {...}   (or ← error if Hermes is down)
  *
  * Every turn, correction, listening miss (repeat / reveal) and question is written to the vault.
  */
@@ -74,13 +73,7 @@ export interface AskGrammar {
   text: string;
 }
 
-/** Anything else for Hermes: chat, or questions about your own progress. Hermes answers it on its local model. */
-export interface AskCasual {
-  type: "ask_casual";
-  text: string;
-}
-
-export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar | AskCasual;
+export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar;
 
 // ── server → client ──────────────────────────────────────────────────────────
 
@@ -149,13 +142,13 @@ export interface CorrectionMsg {
   natural: string;
 }
 
-/** The answer to an ask_grammar or ask_casual question. */
+/** The answer to an ask_grammar question. */
 export interface AnswerMsg {
   type: "answer";
-  kind: "grammar" | "casual";
+  kind: "grammar";
   question: string;
   text: string; // plain text with light markdown (**bold**, "- " lists)
-  model: string; // the Hermes profile's model, e.g. "Claude Opus 5.5" or "Qwen3.6"
+  model: string; // the Hermes profile's model, e.g. "Claude Opus 5.5"
   ms: number;
 }
 
@@ -210,7 +203,7 @@ export interface ChallengeState {
 
 // ── review (HTTP) ────────────────────────────────────────────────────────────
 // The Review panel only knows this visit: the page collects its own mistakes. To look further back,
-// open the notes or ask Hermes.
+// open the notes or ask a grammar question.
 //   POST /api/review/practice        ReviewAttempt → ReviewResult   ねこ checks your fix of an earlier sentence
 //   GET  /api/notes                  → NoteFile[]                   the vault's markdown files, newest first
 //   GET  /api/notes/file?path=       → text/markdown                one note, as written
