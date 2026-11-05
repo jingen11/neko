@@ -4,3 +4,6 @@ vault/
 data/
 log.txt
 dist/
+
+# Textbook scans stay local (copyright)
+docs/*.pdf
