@@ -145,10 +145,10 @@ async function onAsk(c: Client, question: string, kind: QuestionKind) {
   c.asking = true;
   setState("think", "curious", 200_000);
   try {
-    const a = await answerQuestion(question, kind, log);
-    log.info(`${kind} question, answered by ${a.source} (${a.model}) in ${a.ms}ms`);
-    send(c, { type: "answer", kind, question, text: a.text, source: a.source, model: a.model, ms: a.ms });
-    records.logAsk(question, a.text, a.source === "hermes" ? `Hermes (${a.model})` : `${a.model} (Hermes unavailable)`);
+    const a = await answerQuestion(question, kind);
+    log.info(`${kind} question, answered by Hermes (${a.model}) in ${a.ms}ms`);
+    send(c, { type: "answer", kind, question, text: a.text, model: a.model, ms: a.ms });
+    records.logAsk(question, a.text, `Hermes (${a.model})`);
     setState("happy", "happy", 1500);
   } catch (err) {
     log.error({ err }, "question failed");
