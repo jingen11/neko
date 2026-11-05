@@ -117,7 +117,7 @@ export interface Say {
   type: "say";
   id: string;
   ja: string;
-  en: string;
+  en: string; // "" when ねこ answered in plain Japanese without a translation
   mood: Mood;
 }
 

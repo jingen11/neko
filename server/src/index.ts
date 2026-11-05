@@ -4,6 +4,7 @@ import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { hermesHealth } from "./ask.ts";
+import { nekoProfile, profileHealth } from "./hermes.ts";
 import { padSilence } from "./audio.ts";
 import * as challenge from "./challenge.ts";
 import { config } from "./config.ts";
@@ -137,6 +138,7 @@ app.get("/api/health", async () => {
     }),
     check("stt", () => transcribe(new Float32Array(1600), 16000)),
     check("hermes", hermesHealth),
+    check("hermes_neko", () => profileHealth(nekoProfile())),
     ...(config.mqttUrl ? [check("zigbee2mqtt", mqttHealth)] : []),
   ]);
   return { level: config.level, ...Object.fromEntries(results) };
