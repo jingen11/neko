@@ -15,7 +15,8 @@ neko is a Japanese-learning tamagotchi. The pet lives in a web app on the box, a
 ```
                            ┌──────────────── the box ─────────────────────────┐
  ESP32-S3 board        ◀──▶│ neko server (Fastify + WebSocket)                │
-  (mic/speaker/touch)  WS  │  ├─ pet engine (mood, hunger, streak) ── SQLite  │
+  (mic/speaker/touch,  WS  │  ├─ pet engine (mood, hunger, streak) ── SQLite  │
+   GPS add-on)             │  ├─ location (latest fix, in memory)             │
                            │  ├─ STT  sherpa-onnx server (native, own service)│
  browser (PixiJS pet)  ◀──▶│  ├─ TTS  VOICEVOX engine (:50021)                │
                            │  ├─ llama.cpp :8080 — pet reply + grammar check  │
@@ -64,6 +65,18 @@ The pet's voice is what you learn pronunciation from, so correct kanji readings 
 - Audio: ES8311 codec + **ES7210 ADC with echo-cancellation reference**, dual mics — the board can hear you while the pet talks (ESP-SR AFE), so push-to-talk is optional rather than required.
 - Speaker: MX1.25 header — **speaker not included**, buy a small 8 Ω 1–2 W speaker.
 - QMI8658 IMU (shake / pick-up reactions), PCF85063 RTC, AXP2101 battery management, TF slot.
+- **No GPS on the board.** Location comes from an add-on module (below).
+
+### Add-on: GPS module (planned)
+
+The board has no GNSS receiver, so location comes from a small external module wired to the board's spare pads (Waveshare lists 1× UART, 1× I2C, 1× USB pad; the exact pins are only in the pinout image and schematic — check them before buying or soldering).
+
+- **Module:** a small 3.3 V GNSS module with a built-in patch antenna, speaking NMEA over **UART** (e.g. a u-blox M10 or ATGM336H type). Multi-constellation (GPS + Galileo + BeiDou + QZSS) gets a fix faster in cities; QZSS helps in Japan.
+- **Wiring:** module TX → board UART RX, module RX → board UART TX, 3.3 V, GND. Firmware parses NMEA (`$GxGGA` / `$GxRMC`) for latitude, longitude, fix quality and satellites.
+- **Power:** GPS draws more than anything but the screen and audio. Power it from a switchable rail or an enable pin so firmware can turn it off at home (home Wi-Fi seen = no GPS needed) and between fixes. Expect a slow first fix (30 s+ from cold) and weak or no fix indoors.
+- **Fallback:** when there is no fix (indoors, underground), the board sends nothing; the box keeps the last known location with its age.
+- **Privacy:** location goes only to the box, over the authenticated WebSocket (see the away-from-home issue). The box keeps the **latest fix in memory only** — no location history, and nothing written to the vault — unless that is decided later.
+- **Uses:** weather for where you are (the Hermes `neko` profile), time zone when travelling, and place-aware practice later (ねこ notices you're at a station or a café and suggests phrases).
 
 ### Board ↔ box protocol (one WebSocket)
 
@@ -72,6 +85,7 @@ The pet's voice is what you learn pronunciation from, so correct kanji readings 
 
 ```
 board → box: hello{deviceId, fw, token}  listen_start  listen_end  touch{x,y,gesture}  imu{event}
+             location{lat, lon, accuracy_m, sats, at}   (GPS add-on: on a new fix, at most every few minutes)
 box → board: state{mood, anim, hunger, streak}  say{text, furigana}
              audio_start{rate}  audio_end  correction{original, fixed, notes}
 ```
@@ -97,6 +111,7 @@ Decide this before Phase 5.
 3. **Vault learning records + Hermes grammar Q&A.** *(Built, being checked on the box: every turn, translation, listening miss, question and review attempt is appended to `~/vault/Japanese/Daily/<date>.md`; listening misses = repeat / slow / opened the English; questions via the Hermes API server (`/v1/chat/completions`, Hermes reads the notes itself) with a llama.cpp fallback; Review panel and Notes page; weekly review by Hermes cron. Protocol: `ask_grammar` / `ask_casual` → `answer`, `reveal`.)*
 4. **ESP32-S3 firmware** — WebSocket client, audio via ES8311/ES7210, sprite rendering, touch and IMU.
 5. **Away-from-home access** — see open issue above.
+6. **GPS add-on** — pick the module and confirm the UART pads from the schematic, wire it, parse NMEA in firmware, send `location` to the box. Needs 4 (firmware) and is only useful after 5 (away from home).
 
 ## Constraints
 
