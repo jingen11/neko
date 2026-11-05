@@ -19,8 +19,9 @@ neko is a Japanese-learning tamagotchi. The pet lives in a web app on the box, a
    GPS add-on)             │  ├─ location (latest fix, in memory)             │
                            │  ├─ STT  sherpa-onnx server (native, own service)│
  browser (PixiJS pet)  ◀──▶│  ├─ TTS  VOICEVOX engine (:50021)                │
-                           │  ├─ llama.cpp :8080 — pet reply + grammar check  │
-                           │  ├─ Hermes API :8642 — questions, weekly review  │
+                           │  ├─ llama.cpp :8080 — grammar check, challenges  │
+                           │  ├─ Hermes API :8642 — ねこ's replies (time and   │
+                           │  │    weather tools), questions, weekly review   │
                            │  └─ learning records ──▶ ~/vault/Japanese/ (md)  │
                            └──────────────────────────────────────────────────┘
 ```
@@ -31,7 +32,8 @@ neko is a Japanese-learning tamagotchi. The pet lives in a web app on the box, a
 | Backend | Node + TypeScript, Fastify, `@fastify/websocket` | No Hono. |
 | Speech → text | sherpa-onnx **native binary** (prebuilt `sherpa-onnx-offline-websocket-server`), run as a systemd service | neko talks to it over a local WebSocket. No Node native bindings. Candidates below; must not "fix" learner grammar. |
 | Text → speech | VOICEVOX engine (native Linux CPU build, :50021) | Free; credit `VOICEVOX:<character>`. Real Japanese reading/accent dictionary (OpenJTalk). Load only the pet's one voice to keep RAM down. 24 kHz → resample to 16 kHz for board. |
-| Pet reply + grammar check | llama.cpp Qwen3.6, thinking **off**, one JSON answer (temperature 0.7) | The reply comes first (ja, en, mood), then the mistakes, corrected and natural sentences. Doing both in one call beat a separate teacher call: a separate checker invented mistakes, and thinking on was right but took 75–124 s (see `server/experiment.md`). Fixes that change nothing or change the meaning are dropped in code. |
+| Grammar check | llama.cpp Qwen3.6, thinking **off**, one JSON answer (temperature 0.7) | The model writes a reply first (ja, en, mood), then the mistakes, corrected and natural sentences: judging the sentence from the same understanding beat a separate teacher call (a separate checker invented mistakes; thinking on was right but took 75–124 s, see `server/experiment.md`). Fixes that change nothing or change the meaning are dropped in code. This reply is **not spoken**; it only anchors the check. |
+| ねこ's spoken reply | Hermes `neko` profile (local Qwen), in parallel with the check | ねこ is a pet and tutor with a brain but no memory: it gets only the recent conversation, and its tools are **time** (`mcp-server-time`) and **weather** (Open-Meteo MCP). No file, skill, memory or session tools, no background review, Hermes memory off — only the neko server writes the record. The JSON shape (ja, en, mood) is asked for in the prompt (Hermes can't enforce a schema): a plain-Japanese reply is spoken without English; anything else is retried once. If Hermes fails, the check still shows and ねこ looks sick. A turn takes ~5–25 s (tool calls add time). |
 | Questions | Hermes Agent API server | `ask_grammar` → Hermes's `pro` profile (Claude Opus 5.5, `/p/pro/`); `ask_casual` → its `default` profile (local Qwen). Hermes reads the vault itself. neko never calls a model directly for questions; if Hermes is down, the question fails. |
 | Weekly review | Hermes cron job | Reads the week's daily notes and writes `Notes/Weekly/<date>.md`. Prompt in `deploy/hermes/weekly-review-prompt.txt`. |
 | Pet state | SQLite | Pet stats, practice days (streak and today's count), generated translation challenges. No learning history. |

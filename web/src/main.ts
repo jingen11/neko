@@ -370,14 +370,16 @@ function petEntry(id: string, ja: string, en: string) {
   chat.querySelectorAll(".msg.pet .replay").forEach((r) => r.remove());
   const e = document.createElement("div");
   e.className = "msg pet";
+  // A line can come without English (ねこ answered in plain Japanese): then there's nothing to reveal.
+  const enTools = en ? `<button class="chip-btn enBtn" type="button" aria-pressed="false">English</button>` : "";
   e.innerHTML = `<p class="ja" lang="ja">${esc(ja)}</p>
-    <p class="en" hidden>${esc(en)}</p>
-    <div class="msg-tools"><button class="chip-btn enBtn" type="button" aria-pressed="false">English</button><button class="chip-btn replay again" type="button">Again</button><button class="chip-btn replay slow" type="button">Slowly</button></div>`;
-  const enBtn = e.querySelector<HTMLButtonElement>(".enBtn")!;
-  enBtn.addEventListener("click", () => {
+    ${en ? `<p class="en" hidden>${esc(en)}</p>` : ""}
+    <div class="msg-tools">${enTools}<button class="chip-btn replay again" type="button">Again</button><button class="chip-btn replay slow" type="button">Slowly</button></div>`;
+  const enBtn = e.querySelector<HTMLButtonElement>(".enBtn");
+  enBtn?.addEventListener("click", () => {
     const p = e.querySelector<HTMLElement>(".en")!;
     p.hidden = !p.hidden;
-    enBtn.setAttribute("aria-pressed", String(!p.hidden));
+    enBtn!.setAttribute("aria-pressed", String(!p.hidden));
     if (!p.hidden) net.send({ type: "reveal", sayId: id }); // recorded as a listening miss
   });
   e.querySelector(".again")!.addEventListener("click", () => net.send({ type: "repeat" }));

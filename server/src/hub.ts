@@ -10,7 +10,7 @@ import { speak } from "./tts.ts";
 import { answerQuestion, type QuestionKind } from "./ask.ts";
 import * as records from "./records.ts";
 import type { SensorAlert } from "./sensors.ts";
-import { petTurn } from "./tutor.ts";
+import { petReply, petTurn } from "./tutor.ts";
 
 /**
  * The pet's "brain" for connected clients (browser now, ESP32 board later).
@@ -110,20 +110,37 @@ async function onListenEnd(c: Client) {
   send(c, { type: "heard", text: r.text, ms: r.ms });
 }
 
-/** One conversation turn: ねこ replies and checks the sentence in one answer, then speaks. */
+/**
+ * One conversation turn, two calls at once:
+ * - the grammar check: llama.cpp, as before (petTurn; its own reply is only how it understood the sentence)
+ * - what ねこ says: Hermes's neko profile, which can look things up (petReply)
+ * If Hermes fails, the check still shows and ねこ looks sick instead of replying.
+ */
 async function onConfirm(c: Client, text: string) {
   text = text.trim();
   if (!text) return;
   if (c.busy) return send(c, { type: "error", message: "The pet is still thinking about your last sentence." });
   c.busy = true;
-  setState("think", "curious", 60_000);
+  setState("think", "curious", 130_000); // a Hermes reply can include tool calls
   try {
-    const { reply, correction, ms } = await petTurn([...history.slice(-12), { role: "user", content: text }]);
-    log.info({ said: text, reply: reply.ja, mistakes: correction.mistakes }, `reply + check ${ms}ms`);
-    history.push({ role: "user", content: text }, { role: "assistant", content: reply.ja });
-    history.splice(0, Math.max(0, history.length - 24));
+    const turn: ChatMessage[] = [...history.slice(-12), { role: "user", content: text }];
+    const [checked, spoken] = await Promise.allSettled([petTurn(turn), petReply(turn)]);
+    if (checked.status === "rejected") throw checked.reason;
+    const { correction, ms } = checked.value;
+    log.info({ said: text, mistakes: correction.mistakes }, `check ${ms}ms`);
     send(c, { type: "correction", text, ...correction });
     pet.recordPractice(correction.is_correct);
+    if (spoken.status === "rejected") {
+      log.error({ err: spoken.reason }, "Hermes reply failed");
+      records.logTurn(text, correction);
+      send(c, { type: "error", message: `ねこ is feeling sick and can't reply right now (${(spoken.reason as Error).message})` });
+      setState("sick", "worried", 5000);
+      return;
+    }
+    const { reply } = spoken.value;
+    log.info({ reply: reply.ja }, `reply ${spoken.value.ms}ms`);
+    history.push({ role: "user", content: text }, { role: "assistant", content: reply.ja });
+    history.splice(0, Math.max(0, history.length - 24));
     records.logTurn(text, correction, reply);
     await say(c, reply.ja, reply.en, reply.mood);
     if (revertTimer) eatNext = true; // still talking: eat afterwards

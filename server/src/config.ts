@@ -39,6 +39,10 @@ export const config = {
   hermesProProfile: process.env.HERMES_PRO_PROFILE ?? "pro",
   /** Key = API_SERVER_KEY in ~/.hermes/profiles/<profile>/.env. */
   hermesProKey: process.env.HERMES_PRO_KEY ?? "",
+  /** Hermes profile that writes ねこ's spoken replies, with tools for the world right now (time, weather). */
+  hermesNekoProfile: process.env.HERMES_NEKO_PROFILE ?? "neko",
+  /** Key = API_SERVER_KEY in ~/.hermes/profiles/<profile>/.env. */
+  hermesNekoKey: process.env.HERMES_NEKO_KEY ?? "",
   /** Shown on answer cards only. Hermes doesn't report its model, so keep these in line with each profile's config. */
   hermesModelLabel: process.env.HERMES_MODEL_LABEL ?? "Qwen3.6",
   hermesProModelLabel: process.env.HERMES_PRO_MODEL_LABEL ?? "Claude Opus 5.5",

@@ -18,10 +18,10 @@ neko is a Fastify server that calls these local services:
 
 | Service | Default URL | What for |
 |---|---|---|
-| llama.cpp (Qwen3.6) | `http://127.0.0.1:8080` | Pet replies with the grammar check in the same answer, translation challenges (thinking off, JSON output) |
+| llama.cpp (Qwen3.6) | `http://127.0.0.1:8080` | The grammar check of each sentence, translation challenges (thinking off, JSON output) |
 | sherpa-onnx offline WebSocket server | `ws://127.0.0.1:6006` | Japanese speech-to-text (ReazonSpeech or SenseVoice) |
 | VOICEVOX engine | `http://127.0.0.1:50021` | The pet's voice |
-| Hermes Agent API server | `http://127.0.0.1:8642` | Questions (grammar on Claude, casual on the local model), answered from the vault (required for the Ask box; no fallback) |
+| Hermes Agent API server | `http://127.0.0.1:8642` | ねこ's spoken replies (`neko` profile, with time and weather tools); questions (grammar on Claude, casual on the local model), answered from the vault (no fallback) |
 | MQTT broker (Zigbee2MQTT) | `MQTT_URL`, e.g. `mqtt://127.0.0.1:1883` | Home sensors: ねこ reacts when the front door opens or the window shakes (optional: off while `MQTT_URL` is empty) |
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
@@ -55,6 +55,18 @@ curl http://127.0.0.1:8642/health      # {"status": "ok", ...}
 There are two WebSocket messages. `ask_grammar` (**Ask grammar**) goes to the `pro` profile (`HERMES_PRO_PROFILE`), so Claude Opus 5.5 answers. `ask_casual` (**Ask Hermes**) goes to the `default` profile, the local Qwen; it's for chat and questions about your own progress, and allows a longer answer. The pet's live conversation, corrections and challenges stay on llama.cpp directly, for speed. If Hermes is unreachable, the question fails with an error in the app; there is no fallback.
 
 Answers come back in the language the question was written in (English, Chinese, Malay, Japanese, ...): the prompt says so, and repeats it next to the question. The last 4 questions and answers from the past 12 hours go along with each question, so follow-ups like "and what about で?" work. Each answer card names the profile's model (e.g. "Hermes · Claude Opus 5.5"), from `HERMES_MODEL_LABEL` / `HERMES_PRO_MODEL_LABEL`: Hermes doesn't report which model served a turn, so keep these in line with the profiles.
+
+### ねこ's replies (Hermes `neko` profile)
+
+Each conversation turn makes two calls at once. The **grammar check** stays on llama.cpp (`petTurn`, unchanged): the model writes its own reply and judges your sentence from that same understanding, but that reply isn't spoken. **What ねこ says** comes from Hermes's `neko` profile (`/p/neko/`, `HERMES_NEKO_PROFILE` / `HERMES_NEKO_KEY`), which can look up the world right now: the time anywhere ("ロンドンはいま何時？") and the weather.
+
+ねこ is a pet and tutor with a brain but no memory: it gets only the recent conversation that neko sends. Only the neko server writes your record. The `neko` profile is set up for that, in `~/.hermes/profiles/neko/`:
+
+- cloned from `default`, on the local model; `SOUL.md` replaced with a short note (follow the app's instructions and format, use tools for real-world facts)
+- MCP servers: `time` (`mcp-server-time`, `--local-timezone Asia/Kuala_Lumpur`) and `weather` (`weather-open-meteo-mcp`, Open-Meteo, no key), installed under `~/.local/share/mcp/`
+- no file, skill, memory or session tools (`agent.disabled_toolsets`), all skills off, `auxiliary.background_review.enabled: false`, `memory.memory_enabled` / `user_profile_enabled: false`, `max_turns: 20`
+
+Hermes can't enforce a JSON schema, so the reply's shape (ja, en, mood) is in the prompt and checked in code: a reply in plain Japanese is spoken as is (no English that turn), anything else is retried once. If Hermes fails, the check still shows, ねこ looks sick and the page says why. A turn takes about 5–25 s; tool calls add time. Known limit: the local model sometimes misreads 24-hour times (01:22 as 午後1時).
 
 ### Weekly review (Hermes cron)
 
@@ -140,6 +152,8 @@ ssh -L 8081:localhost:8081 <box>
 | `HERMES_KEY` | (none) | `API_SERVER_KEY` of Hermes's default profile (`~/.hermes/.env`); casual questions |
 | `HERMES_PRO_PROFILE` | `pro` | Hermes profile for grammar questions, served at `/p/<profile>/` |
 | `HERMES_PRO_KEY` | (none) | `API_SERVER_KEY` of that profile (`~/.hermes/profiles/<profile>/.env`) |
+| `HERMES_NEKO_PROFILE` | `neko` | Hermes profile for ねこ's spoken replies, served at `/p/<profile>/` |
+| `HERMES_NEKO_KEY` | (none) | `API_SERVER_KEY` of that profile; without it ねこ can't reply (it looks sick) |
 | `HERMES_MODEL_LABEL` / `HERMES_PRO_MODEL_LABEL` | `Qwen3.6` / `Claude Opus 5.5` | Model names shown on answer cards (display only) |
 | `MQTT_URL` | (none) | MQTT broker Zigbee2MQTT uses, e.g. `mqtt://127.0.0.1:1883`; empty = no sensors. `MQTT_USERNAME` / `MQTT_PASSWORD` if it needs a login, `MQTT_BASE_TOPIC` (`zigbee2mqtt`) |
 | `NEKO_DOOR_SENSOR` / `NEKO_WINDOW_SENSOR` | `front_door` / `front_window_1` | Zigbee2MQTT names of the [home sensors](#home-sensors-zigbee2mqtt) |
@@ -173,7 +187,7 @@ The pet app and the ESP32 board talk to neko over one WebSocket at `/ws`: JSON m
 | Endpoint | |
 |---|---|
 | `POST /api/stt` | Raw 16-bit mono PCM (`x-sample-rate`, default 16000) → `{text, ms}` |
-| `POST /api/reply` | `{text, history}` → pet reply and its check of the sentence `{ja, en, mood, correction: {is_correct, corrected, mistakes, natural}, ms}` |
+| `POST /api/reply` | `{text, history}` → the check of the sentence with llama.cpp's own reply `{ja, en, mood, correction: {is_correct, corrected, mistakes, natural}, ms}` (lab page; the app's spoken reply comes from Hermes) |
 | `POST /api/review/practice` | `{point, said, original, fix, answer}` → ねこ's check of your fix `{ok, still, mistakes}` |
 | `GET /api/notes` | the vault's markdown files `[{path, mtime, size}]`, newest first |
 | `GET /api/notes/file?path=` | one note's markdown, as written |
@@ -181,7 +195,7 @@ The pet app and the ESP32 board talk to neko over one WebSocket at `/ws`: JSON m
 | `GET /api/voices` | VOICEVOX voices |
 | `GET /api/voice-test` | The voice-test sentences (Japanese, romaji, intended mistake) |
 | `POST /api/voice-test/:n` | Raw PCM of you reading sentence `n` → `{transcript, verdict, ms}`; recording saved to `server/data/voice-tests/` |
-| `GET /api/health` | Status of llama.cpp, STT, VOICEVOX and Hermes |
+| `GET /api/health` | Status of llama.cpp, STT, VOICEVOX, Hermes (`hermes`: the Ask profiles; `hermes_neko`: ねこ's replies) |
 
 ## STT bake-off
 
@@ -204,7 +218,7 @@ shared/protocol.ts     WebSocket protocol (server, web app, and later the board)
 server/                Fastify server
   src/                 hub (pet protocol), pet (stats), records (appends to the daily notes),
                        notes (reads the vault for the Notes page), ask (questions via Hermes),
-                       tutor (reply + grammar check), challenge (translation), mqtt (Zigbee2MQTT client),
+                       tutor (grammar check; ねこ's reply via Hermes), hermes (Hermes profile client), challenge (translation), mqtt (Zigbee2MQTT client),
                        sensors (door and window events),
                        db, stt, tts, llm, audio, voicetest, index (routes)
   public/lab.html      Phase 1 test page (speech loop + voice test)
