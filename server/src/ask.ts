@@ -76,6 +76,10 @@ function followUps(): Turn[] {
   ]);
 }
 
+// Only the default profile (casual questions) has the textbook MCP server.
+const textbookNote = `
+Their textbook (explanations in Chinese) is searchable with the textbook tools. For a grammar or vocabulary question, check how the book explains it and say which lesson and page. where_am_i tells you their current lesson; keep examples within what they have reached.`;
+
 async function askHermes(question: string, kind: QuestionKind): Promise<Answer> {
   const { base, key, keyName, model } = route(kind);
   if (!key) throw new Error(`${keyName} is not set in server/.env`);
@@ -92,7 +96,7 @@ async function askHermes(question: string, kind: QuestionKind): Promise<Answer> 
         {
           role: "system",
           content: `${brief(kind)}
-The learner's record is in the Obsidian vault at ${config.vaultDir}: Daily/<date>.md holds every sentence they said that day with its mistakes, their translations, listening trouble and past questions. Read the notes relevant to the question before answering.`,
+The learner's record is in the Obsidian vault at ${config.vaultDir}: Daily/<date>.md holds every sentence they said that day with its mistakes, their translations, listening trouble and past questions. Read the notes relevant to the question before answering.${kind === "casual" ? textbookNote : ""}`,
         },
         ...followUps(),
         questionTurn(question),

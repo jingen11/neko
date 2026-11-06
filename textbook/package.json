@@ -1,0 +1,20 @@
+{
+  "name": "neko-textbook",
+  "version": "0.1.0",
+  "private": true,
+  "description": "neko: MCP server that searches the learner's transcribed textbook",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.ts",
+    "index": "node scripts/index.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
