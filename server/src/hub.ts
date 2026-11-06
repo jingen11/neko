@@ -7,7 +7,7 @@ import type { ChatMessage } from "./llm.ts";
 import * as pet from "./pet.ts";
 import { transcribe } from "./stt.ts";
 import { speak } from "./tts.ts";
-import { answerQuestion, type QuestionKind } from "./ask.ts";
+import { answerQuestion, askHistory, resetConversation, type QuestionKind } from "./ask.ts";
 import * as records from "./records.ts";
 import type { SensorAlert } from "./sensors.ts";
 import { petReply, petTurn } from "./tutor.ts";
@@ -26,8 +26,11 @@ interface Client {
   micRate: number;
   micBytes: number;
   busy: boolean;
-  asking: boolean;
 }
+
+// The Ask conversations are shared by every web client (a reload or a second tab sees the same one), so
+// there's one question per conversation at a time, and its answer goes to every web client.
+const asking = new Set<QuestionKind>();
 
 const MAX_MIC_SECONDS = 30;
 const AUDIO_CHUNK_SAMPLES = 4096;
@@ -43,6 +46,7 @@ let log: FastifyBaseLogger;
 
 const send = (c: Client, msg: ServerMessage) => c.ws.readyState === c.ws.OPEN && c.ws.send(JSON.stringify(msg));
 const sendAll = (msg: ServerMessage) => clients.forEach((c) => send(c, msg));
+const sendWeb = (msg: ServerMessage) => clients.forEach((c) => c.hello?.client === "web" && send(c, msg));
 
 /** Broadcast the pet's state. With `holdMs`, return to the resting state afterwards. */
 function setState(anim?: Anim, mood?: Mood, holdMs?: number) {
@@ -158,21 +162,21 @@ async function onConfirm(c: Client, text: string) {
 async function onAsk(c: Client, question: string, kind: QuestionKind) {
   question = question.trim();
   if (!question) return;
-  if (c.asking) return send(c, { type: "error", message: "Still looking into your last question." });
-  c.asking = true;
+  if (asking.has(kind)) return send(c, { type: "error", kind, message: "Still looking into your last question." });
+  asking.add(kind);
   setState("think", "curious", 200_000);
   try {
     const a = await answerQuestion(question, kind);
     log.info(`${kind} question, answered by Hermes (${a.model}) in ${a.ms}ms`);
-    send(c, { type: "answer", kind, question, text: a.text, model: a.model, ms: a.ms });
+    sendWeb({ type: "answer", kind, question, text: a.text, model: a.model, ms: a.ms });
     records.logAsk(question, a.text, `Hermes (${a.model})`);
     setState("happy", "happy", 1500);
   } catch (err) {
     log.error({ err }, "question failed");
-    send(c, { type: "error", message: `Couldn't answer that: ${(err as Error).message}` });
+    sendWeb({ type: "error", kind, message: `Couldn't answer that: ${(err as Error).message}` });
     setState("sad", "worried", 2000);
   } finally {
-    c.asking = false;
+    asking.delete(kind);
   }
 }
 
@@ -189,6 +193,7 @@ async function onMessage(c: Client, msg: ClientMessage) {
     case "hello": {
       c.hello = msg;
       log.info(`${msg.client} connected (${msg.deviceId}), voice at ${msg.audioRate} Hz`);
+      if (msg.client === "web") for (const kind of ["grammar", "casual"] as const) send(c, askHistory(kind, asking.has(kind)));
       const stats = pet.stats();
       const mood = pet.restingMood(stats);
       setState();
@@ -222,12 +227,15 @@ async function onMessage(c: Client, msg: ClientMessage) {
       return onAsk(c, msg.text, "grammar");
     case "ask_casual":
       return onAsk(c, msg.text, "casual");
+    case "ask_reset":
+      if (msg.kind === "grammar" || msg.kind === "casual") resetConversation(msg.kind);
+      return;
   }
 }
 
 export function attach(ws: WebSocket, logger: FastifyBaseLogger) {
   log = logger;
-  const c: Client = { id: randomUUID(), ws, mic: null, micRate: 16000, micBytes: 0, busy: false, asking: false };
+  const c: Client = { id: randomUUID(), ws, mic: null, micRate: 16000, micBytes: 0, busy: false };
   clients.add(c);
   ws.on("message", (data, isBinary) => {
     const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);

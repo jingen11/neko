@@ -5,7 +5,7 @@ export function run(
   onMessage: (m: ServerMessage) => void,
   wake: () => void,
   userSays: (text: string) => void,
-  ask: (text: string) => void,
+  ask: (text: string, kind?: "grammar" | "casual") => void,
 ) {
   const stats = { name: "ねこ", hunger: 58, happiness: 64, streak: 6, practicedToday: 3, level: "N5" };
   wake();
@@ -46,5 +46,14 @@ export function run(
     text: "Use **は** after a time word only when you contrast it with another time.\n- 明日行きたいです。 (I want to go tomorrow.)\n- 明日は行きたいです。 (Tomorrow, at least, I want to go.)\nYou added は after 明日 twice this week, both times for a plain plan.",
     model: "Claude Opus 5.5",
     ms: 8400,
+  });
+  ask("Which lesson covers the passive?", "casual");
+  onMessage({
+    type: "answer",
+    kind: "casual",
+    question: "Which lesson covers the passive?",
+    text: "Lesson 41 of volume 2 (李さんは部長にほめられました, p. 188). It covers:\n- the passive forms (〜れる／〜られる)\n- the \"suffering\" passive, as in 雨に降られました\n- 〜によって for who made or wrote something",
+    model: "Qwen3.6",
+    ms: 21300,
   });
 }

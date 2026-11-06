@@ -20,6 +20,10 @@
  * Questions to Hermes, which reads the learner's vault (or the local model, if Hermes is down):
  *   ask_grammar {text}  →  ← state {anim:"think"}  →  ← answer {...}   Hermes on Claude
  *   ask_casual  {text}  →  ← state {anim:"think"}  →  ← answer {...}   Hermes on its local model (chat, "what have I learnt?")
+ *   Each kind is its own conversation (its own tab on the web page): follow-ups only see that kind's
+ *   earlier questions. The conversations are shared by all web clients: one question per kind at a time,
+ *   and its answer (or error) goes to every web client. ask_reset {kind} starts that conversation over.
+ *   ← ask_history {kind, asking, items}   after a web client's hello: that conversation's recent questions, to refill its tab
  *
  * Every turn, correction, listening miss (repeat / reveal) and question is written to the vault.
  */
@@ -80,7 +84,13 @@ export interface AskCasual {
   text: string;
 }
 
-export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar | AskCasual;
+/** Start the grammar or the Hermes conversation over: later questions no longer see the earlier ones. */
+export interface AskReset {
+  type: "ask_reset";
+  kind: AskKind;
+}
+
+export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar | AskCasual | AskReset;
 
 // ── server → client ──────────────────────────────────────────────────────────
 
@@ -149,10 +159,13 @@ export interface CorrectionMsg {
   natural: string;
 }
 
+/** Which conversation a question belongs to: grammar (ask_grammar) or Hermes (ask_casual). */
+export type AskKind = "grammar" | "casual";
+
 /** The answer to an ask_grammar or ask_casual question. */
 export interface AnswerMsg {
   type: "answer";
-  kind: "grammar" | "casual";
+  kind: AskKind;
   question: string;
   text: string; // plain text with light markdown (**bold**, "- " lists)
   model: string; // the Hermes profile's model, e.g. "Claude Opus 5.5" or "Qwen3.6"
@@ -162,6 +175,17 @@ export interface AnswerMsg {
 export interface ErrorMsg {
   type: "error";
   message: string;
+  /** Set when a question failed: which conversation it was in. */
+  kind?: AskKind;
+}
+
+/** A conversation's recent questions and answers (oldest first), sent to a web client after hello. */
+export interface AskHistory {
+  type: "ask_history";
+  kind: AskKind;
+  /** A question in this conversation is still being answered; its answer will follow. */
+  asking: boolean;
+  items: { question: string; text: string; model: string; ms: number }[];
 }
 
 /** Home sensor events (through Zigbee2MQTT). */
@@ -176,7 +200,7 @@ export interface SensorMsg {
   at: number; // ms since epoch
 }
 
-export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | AnswerMsg | ErrorMsg | SensorMsg;
+export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | AnswerMsg | ErrorMsg | SensorMsg | AskHistory;
 
 // ── translation challenge (HTTP, not the WebSocket) ──────────────────────────
 //   GET  /api/challenge              → ChallengeState   today's current challenge (the daily one is made on first request)

@@ -1,7 +1,8 @@
 import { Application } from "pixi.js";
-import type { AnswerMsg, Anim, CorrectionMsg, Mood, PetStats, SensorMsg, ServerMessage } from "../../shared/protocol.ts";
+import type { AnswerMsg, Anim, AskHistory, AskKind, CorrectionMsg, Mood, PetStats, SensorMsg, ServerMessage } from "../../shared/protocol.ts";
 
-type AskKind = AnswerMsg["kind"];
+/** The conversation panel's tabs: ねこ (practice), then one per kind of question to Hermes. */
+type Tab = "neko" | AskKind;
 import { AudioIO } from "./audio.ts";
 import { initChallenge } from "./challenge.ts";
 import { initReview } from "./review.ts";
@@ -13,9 +14,9 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const textEl = $<HTMLTextAreaElement>("text");
 const talkBtn = $<HTMLButtonElement>("talk");
 const sendBtn = $<HTMLButtonElement>("send");
-const askBtn = $<HTMLButtonElement>("askBtn");
-const chatBtn = $<HTMLButtonElement>("chatBtn");
+const newConvBtn = $<HTMLButtonElement>("newConv");
 const chat = $("chat");
+const threads: Record<Tab, HTMLElement> = { neko: chat, grammar: $("thread-grammar"), casual: $("thread-casual") };
 
 // Mirrors server/src/pet.ts: one practised sentence takes FEED_PER_TURN off hunger; below SAD_BELOW happiness it's sad.
 const FEED_PER_TURN = 15;
@@ -31,8 +32,10 @@ let thinking = false;
 let mood: Mood = "sleepy";
 let anim: Anim = "sleep";
 let lastUserEntry: HTMLElement | null = null;
-let askMode: AskKind | null = null; // the composer sends a question instead of a practice sentence
-let pendingAnswer: HTMLElement | null = null; // the answer card waiting for Hermes
+let tab: Tab = "neko"; // the open conversation; the composer sends to it
+const drafts: Record<Tab, string> = { neko: "", grammar: "", casual: "" };
+const pending: Record<AskKind, HTMLElement | null> = { grammar: null, casual: null }; // answer cards waiting for Hermes
+const lastModel: Record<AskKind, string> = { grammar: "", casual: "" };
 
 // ── the cat: PixiJS starts at once so the sleeping cat shows before waking ──
 (async () => {
@@ -114,7 +117,8 @@ function setAwake() {
   awake = true;
   $("wakeBtn").hidden = true;
   $("petBtn").hidden = false;
-  for (const el of [talkBtn, sendBtn, askBtn, chatBtn, textEl]) el.disabled = false;
+  for (const el of [talkBtn, sendBtn, textEl]) el.disabled = false;
+  setTab(tab);
   $("chatEmpty").textContent = "Listening for the first line…";
 }
 
@@ -155,29 +159,41 @@ function onMessage(m: ServerMessage) {
     case "heard":
       setTalk("idle");
       if (!m.text) return toast("I didn't catch that. Try again?");
-      textEl.value = m.text;
-      textEl.focus();
+      if (tab !== "neko") drafts.neko = m.text; // switched tabs while it was transcribing
+      else {
+        textEl.value = m.text;
+        textEl.focus();
+      }
       break;
     case "correction":
       thinking = false;
-      sendBtn.disabled = false;
+      if (tab === "neko") sendBtn.disabled = false;
       showCorrection(m);
       break;
     case "answer":
       showAnswer(m);
       break;
+    case "ask_history":
+      showHistory(m);
+      break;
     case "sensor":
       showSensor(m);
       break;
     case "error":
-      if (pendingAnswer?.classList.contains("wait") && m.message.startsWith("Couldn't answer")) {
-        pendingAnswer.remove();
-        pendingAnswer = null;
-        if (askMode) sendBtn.disabled = false;
+      if (m.kind) {
+        // a question failed: only that conversation is affected
+        if (m.message.startsWith("Couldn't answer")) {
+          pending[m.kind]?.remove();
+          pending[m.kind] = null;
+          markTab(m.kind);
+          setTab(tab);
+        }
+        toast(m.message);
+        break;
       }
       lastUserEntry?.querySelector(".check.wait")?.remove();
       thinking = false;
-      sendBtn.disabled = false;
+      if (tab === "neko") sendBtn.disabled = false;
       setTalk("idle");
       toast(m.message);
       break;
@@ -206,7 +222,7 @@ $("sensorClose").addEventListener("click", () => {
 
 // ── push to talk ─────────────────────────────────────────────
 async function startTalk() {
-  if (recording || !awake || demo) return;
+  if (recording || !awake || demo || tab !== "neko") return;
   recording = true;
   audio.stopVoice(); // interrupt the pet
   setTalk("rec");
@@ -255,63 +271,157 @@ document.addEventListener("keyup", (e) => {
   }
 });
 
-// ── ask mode: the composer sends a question to Hermes instead of a practice sentence ──
-// Ask grammar → ask_grammar (Hermes on Claude). Ask Hermes → ask_casual (Hermes on its local model), for
-// chat and questions about your own progress ("what have I learnt this week?").
-const ASK = {
-  grammar: { btn: askBtn, label: "Grammar question", placeholder: "Ask about grammar, in English or Japanese… e.g. when do I use に vs で?", sr: "Your grammar question" },
-  casual: { btn: chatBtn, label: "Question for Hermes", placeholder: "Ask Hermes anything… e.g. what have I learnt this week?", sr: "Your question for Hermes" },
+// ── tabs: ねこ (practice sentences), Grammar (ask_grammar, Hermes on Claude) and Hermes (ask_casual, Hermes on
+// the local model, for chat and "what have I learnt this week?"). Each tab keeps its own thread and draft; the
+// composer below sends to whichever is open.
+const TABS = {
+  neko: { sr: "Your reply in Japanese", placeholder: "話してみて… or type here", lang: "ja" },
+  grammar: { sr: "Your grammar question", placeholder: "Ask about grammar, in English, Chinese or Japanese…", lang: "" },
+  casual: { sr: "Your question for Hermes", placeholder: "Ask Hermes anything… e.g. what have I learnt this week?", lang: "" },
 } as const;
+const tabBtn = (t: Tab) => $<HTMLButtonElement>(`tab-${t}`);
+const tabOrder: Tab[] = ["neko", "grammar", "casual"];
 
-function setAskMode(kind: AskKind | null) {
-  askMode = kind;
-  for (const [k, v] of Object.entries(ASK)) v.btn.setAttribute("aria-pressed", String(k === kind));
-  textEl.closest(".composer")!.classList.toggle("asking", !!kind);
-  textEl.placeholder = kind ? ASK[kind].placeholder : "話してみて… or type here";
-  textEl.lang = kind ? "" : "ja";
-  $("text").previousElementSibling!.textContent = kind ? ASK[kind].sr : "Your reply in Japanese";
-  sendBtn.textContent = kind ? "Ask" : "Send";
-  sendBtn.disabled = kind ? !!pendingAnswer : thinking;
+function setTab(t: Tab, focus = false) {
+  if (t !== tab) {
+    drafts[tab] = textEl.value;
+    textEl.value = drafts[t];
+  }
+  tab = t;
+  for (const k of tabOrder) {
+    const on = k === t;
+    tabBtn(k).setAttribute("aria-selected", String(on));
+    tabBtn(k).tabIndex = on ? 0 : -1;
+    threads[k].hidden = !on;
+  }
+  tabBtn(t).querySelector<HTMLElement>(".dot")!.hidden = t === "neko" || !pending[t as AskKind];
+  tabBtn(t).classList.remove("unread");
+  const asking = t !== "neko";
+  textEl.closest(".composer")!.classList.toggle("asking", asking);
+  textEl.placeholder = TABS[t].placeholder;
+  textEl.lang = TABS[t].lang;
+  $("text").previousElementSibling!.textContent = TABS[t].sr;
+  talkBtn.hidden = asking;
+  newConvBtn.hidden = !asking;
+  newConvBtn.disabled = !awake || (asking && !!pending[t as AskKind]);
+  $("keys").innerHTML = asking ? "<kbd>Enter</kbd> ask · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line" : "<kbd>Space</kbd> hold to talk · <kbd>Enter</kbd> send";
+  sendBtn.textContent = asking ? "Ask" : "Send";
+  sendBtn.disabled = !awake || (asking ? !!pending[t as AskKind] : thinking);
+  $("turnCount").textContent = asking ? (lastModel[t as AskKind] ? `Hermes · ${lastModel[t as AskKind]}` : "Reads your notes") : sentences ? `${plural(sentences, "sentence")} this visit` : "This visit";
+  if (focus) textEl.focus();
+  scrollChat(t);
 }
-for (const [k, v] of Object.entries(ASK))
-  v.btn.addEventListener("click", () => {
-    setAskMode(askMode === k ? null : (k as AskKind));
+
+/** A tab's marker: a dot while its question is being answered, and a highlight when an answer came in unseen. */
+function markTab(kind: AskKind, unread = false) {
+  tabBtn(kind).querySelector<HTMLElement>(".dot")!.hidden = !pending[kind] && !unread;
+  if (unread && tab !== kind) tabBtn(kind).classList.add("unread");
+}
+
+for (const t of tabOrder) tabBtn(t).addEventListener("click", () => setTab(t, awake));
+// arrow keys move between tabs, as in any tab list
+$("tab-neko").parentElement!.addEventListener("keydown", (e) => {
+  const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+  if (!step) return;
+  e.preventDefault();
+  const next = tabOrder[(tabOrder.indexOf(tab) + step + tabOrder.length) % tabOrder.length];
+  setTab(next);
+  tabBtn(next).focus();
+});
+// the example questions in an empty tab fill the box
+for (const b of document.querySelectorAll<HTMLButtonElement>(".ask-empty .try button"))
+  b.addEventListener("click", () => {
+    textEl.value = b.textContent ?? "";
     textEl.focus();
   });
 
-function ask(text: string, kind: AskKind = "grammar") {
-  if (pendingAnswer) return toast("Still looking into your last question.");
-  net.send({ type: kind === "grammar" ? "ask_grammar" : "ask_casual", text });
-  $("chatEmpty").hidden = true;
+newConvBtn.addEventListener("click", () => {
+  if (tab === "neko" || pending[tab]) return;
+  net.send({ type: "ask_reset", kind: tab });
+  clearThread(tab);
+  lastModel[tab] = "";
+  setTab(tab, true);
+  toast("New conversation: Hermes won't see the earlier questions.");
+});
+
+/** Empty an ask thread back to its intro. */
+function clearThread(kind: AskKind) {
+  threads[kind].querySelectorAll(".msg").forEach((m) => m.remove());
+  threads[kind].querySelector<HTMLElement>(".ask-empty")!.hidden = false;
+}
+
+function questionEl(kind: AskKind, text: string) {
+  threads[kind].querySelector<HTMLElement>(".ask-empty")!.hidden = true;
   const q = document.createElement("div");
   q.className = "msg me q";
-  q.innerHTML = `<p class="label">${ASK[kind].label}</p><p class="text">${esc(text)}</p>`;
+  q.innerHTML = `<p class="text">${esc(text)}</p>`;
+  return q;
+}
+
+function answerHtml(m: { text: string; model: string; ms: number }) {
+  return `<div class="body">${markdown(m.text)}</div><p class="src">Hermes · <b>${esc(m.model)}</b>, from your notes · ${(m.ms / 1000).toFixed(1)} s</p>`;
+}
+
+function ask(text: string, kind: AskKind = "grammar") {
+  if (pending[kind]) return toast("Still looking into your last question.");
+  net.send({ type: kind === "grammar" ? "ask_grammar" : "ask_casual", text });
   const a = document.createElement("div");
   a.className = "msg answer wait";
-  a.innerHTML = `<p class="label">Answer</p><div class="body"><p>Looking through your notes…</p></div>`;
-  chat.append(q, a);
-  pendingAnswer = a;
-  scrollChat();
+  a.innerHTML = `<div class="body"><p>Looking through your notes…</p></div>`;
+  threads[kind].append(questionEl(kind, text), a);
+  pending[kind] = a;
+  markTab(kind);
+  if (tab === kind) setTab(kind);
+  scrollChat(kind);
 }
 
 function showAnswer(m: AnswerMsg) {
-  const a = pendingAnswer ?? chat.appendChild(Object.assign(document.createElement("div"), { className: "msg answer" }));
-  pendingAnswer = null;
+  let a = pending[m.kind];
+  if (!a) {
+    // asked from another tab or before a reload: show the question too
+    a = Object.assign(document.createElement("div"), { className: "msg answer" });
+    threads[m.kind].append(questionEl(m.kind, m.question), a);
+  }
+  pending[m.kind] = null;
+  lastModel[m.kind] = m.model;
   a.classList.remove("wait");
-  const from = `Hermes · <b>${esc(m.model)}</b>, from your notes`;
-  a.innerHTML = `<p class="label">Answer</p><div class="body">${markdown(m.text)}</div><p class="src">From ${from} · ${(m.ms / 1000).toFixed(1)} s</p>`;
-  if (askMode) sendBtn.disabled = false;
-  scrollChat();
+  a.innerHTML = answerHtml(m);
+  markTab(m.kind, true);
+  if (tab === m.kind) setTab(m.kind);
+  scrollChat(m.kind);
+}
+
+/** After (re)connecting: the server's recent questions for this tab, so a reload keeps the conversation. */
+function showHistory(h: AskHistory) {
+  // a question still being answered stays last; if it finished while we were disconnected, it's in the items
+  const waiting = h.asking ? pending[h.kind] : null;
+  const waitingQ = waiting?.previousElementSibling;
+  if (!h.asking) pending[h.kind] = null;
+  clearThread(h.kind);
+  for (const item of h.items) {
+    const a = document.createElement("div");
+    a.className = "msg answer";
+    a.innerHTML = answerHtml(item);
+    threads[h.kind].append(questionEl(h.kind, item.question), a);
+    lastModel[h.kind] = item.model;
+  }
+  if (waiting) {
+    if (waitingQ) threads[h.kind].append(waitingQ);
+    threads[h.kind].append(waiting);
+    threads[h.kind].querySelector<HTMLElement>(".ask-empty")!.hidden = true;
+  }
+  markTab(h.kind);
+  if (tab === h.kind) setTab(h.kind);
 }
 
 // ── send a sentence ──────────────────────────────────────────
 function send() {
   const text = textEl.value.trim();
-  if (text && askMode && awake) {
-    if (pendingAnswer) return toast("Still looking into your last question.");
+  if (tab !== "neko") {
+    if (!text || !awake) return;
+    if (pending[tab]) return toast("Still looking into your last question.");
     textEl.value = "";
-    ask(text, askMode);
-    setAskMode(null); // back to practice; the answer arrives in the thread
+    ask(text, tab);
     return;
   }
   if (!text || thinking || !awake) return;
@@ -359,7 +469,8 @@ function userEntry(text: string) {
   e.className = "msg me";
   e.innerHTML = `<p class="ja" lang="ja">${esc(text)}</p><p class="check wait">Checking…</p>`;
   chat.append(e);
-  $("turnCount").textContent = `${plural(++sentences, "sentence")} this visit`;
+  sentences++;
+  if (tab === "neko") $("turnCount").textContent = `${plural(sentences, "sentence")} this visit`;
   scrollChat();
   return e;
 }
@@ -385,11 +496,13 @@ function petEntry(id: string, ja: string, en: string) {
   e.querySelector(".again")!.addEventListener("click", () => net.send({ type: "repeat" }));
   e.querySelector(".slow")!.addEventListener("click", () => net.send({ type: "repeat", slow: true }));
   chat.append(e);
+  if (tab !== "neko") tabBtn("neko").classList.add("unread");
   scrollChat();
 }
 
-function scrollChat() {
-  chat.scrollTop = chat.scrollHeight;
+function scrollChat(t: Tab = "neko") {
+  const el = threads[t];
+  el.scrollTop = el.scrollHeight;
 }
 
 // ── debug: force animations (open /?debug) ───────────────────
@@ -451,9 +564,13 @@ function esc(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
-// This visit's mistakes, from the conversation and the translation card. Asking about a point goes to
-// the conversation once ねこ is awake.
-const review = initReview(demo, toast, (q) => (awake ? ask(q) : toast(`Wake ねこ first to ask about it.`)));
+// This visit's mistakes, from the conversation and the translation card. Asking about a point opens the
+// Grammar tab once ねこ is awake.
+const review = initReview(demo, toast, (q) => {
+  if (!awake) return toast(`Wake ねこ first to ask about it.`);
+  setTab("grammar");
+  ask(q, "grammar");
+});
 // The translation challenge card works over HTTP, so it loads before the cat is woken.
 initChallenge(demo, toast, (zh, r) => review.add(r.answer, r.corrected, r.mistakes, zh));
 
