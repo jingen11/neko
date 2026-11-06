@@ -1,4 +1,5 @@
 import { config } from "./config.ts";
+import type { AskHistory, AskKind } from "../../shared/protocol.ts";
 
 /**
  * Questions from the Ask box. Every one goes through Hermes Agent, which can open the learner's
@@ -16,7 +17,7 @@ export interface Answer {
 }
 
 /** Which message the question came in as: ask_grammar goes to the pro profile, ask_casual to the default one. */
-export type QuestionKind = "grammar" | "casual";
+export type QuestionKind = AskKind;
 
 /** Where each kind of question goes in Hermes. Profiles other than default are served under /p/<profile>/. */
 function route(kind: QuestionKind) {
@@ -61,19 +62,36 @@ const questionTurn = (question: string): Turn => ({
   content: `${question}\n\n(Answer in the language this question is written in.)`,
 });
 
-// The last few questions and answers, kept in memory so follow-ups ("and what about で?") work.
+// The last few questions and answers of each conversation (grammar and Hermes are separate), kept in
+// memory so follow-ups ("and what about で?") work and the page can refill its tabs after a reload.
 // neko doesn't read them back from the vault; they're gone when the server restarts.
-const recent: { at: number; question: string; answer: string }[] = [];
-const FOLLOW_UPS = 4;
+type Recent = { at: number; question: string; answer: string; model: string; ms: number };
+const recent: Record<QuestionKind, Recent[]> = { grammar: [], casual: [] };
+const FOLLOW_UPS = 4; // sent to Hermes as context
+const KEEP = 20; // shown again in the tab
 const FOLLOW_UP_HOURS = 12;
 
-/** The last few questions and answers, as conversation turns before the new question. */
-function followUps(): Turn[] {
+const fresh = (kind: QuestionKind) => {
   const since = Date.now() - FOLLOW_UP_HOURS * 3_600_000;
-  return recent.filter((r) => r.at >= since).flatMap(({ question, answer }) => [
+  return recent[kind].filter((r) => r.at >= since);
+};
+
+/** The last few questions and answers of this conversation, as turns before the new question. */
+function followUps(kind: QuestionKind): Turn[] {
+  return fresh(kind).slice(-FOLLOW_UPS).flatMap(({ question, answer }) => [
     { role: "user" as const, content: question },
     { role: "assistant" as const, content: answer },
   ]);
+}
+
+/** This conversation's recent questions, for the page's tab. */
+export function askHistory(kind: QuestionKind, asking: boolean): AskHistory {
+  return { type: "ask_history", kind, asking, items: fresh(kind).map((r) => ({ question: r.question, text: r.answer, model: r.model, ms: r.ms })) };
+}
+
+/** Start a conversation over: the next question has no earlier ones before it. */
+export function resetConversation(kind: QuestionKind) {
+  recent[kind].length = 0;
 }
 
 async function askHermes(question: string, kind: QuestionKind): Promise<Answer> {
@@ -94,7 +112,7 @@ async function askHermes(question: string, kind: QuestionKind): Promise<Answer> 
           content: `${brief(kind)}
 The learner's record is in the Obsidian vault at ${config.vaultDir}: Daily/<date>.md holds every sentence they said that day with its mistakes, their translations, listening trouble and past questions. Read the notes relevant to the question before answering.`,
         },
-        ...followUps(),
+        ...followUps(kind),
         questionTurn(question),
       ],
     }),
@@ -111,8 +129,9 @@ The learner's record is in the Obsidian vault at ${config.vaultDir}: Daily/<date
 
 export async function answerQuestion(question: string, kind: QuestionKind): Promise<Answer> {
   const answer = await askHermes(question, kind);
-  recent.push({ at: Date.now(), question, answer: answer.text });
-  recent.splice(0, Math.max(0, recent.length - FOLLOW_UPS));
+  const list = recent[kind];
+  list.push({ at: Date.now(), question, answer: answer.text, model: answer.model, ms: answer.ms });
+  list.splice(0, Math.max(0, list.length - KEEP));
   return answer;
 }
 

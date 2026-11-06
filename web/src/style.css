@@ -128,7 +128,7 @@ h1 { font: 500 var(--fs-title)/1.15 var(--serif); letter-spacing: -0.01em; }
 
 /* conversation: the thread scrolls, the reply box stays at the foot of the panel */
 .chat-panel { display: flex; flex-direction: column; }
-#chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; scrollbar-width: thin; }
+.thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; scrollbar-width: thin; }
 .msg { max-width: 88%; padding: 10px 14px; border-radius: 16px; background: var(--raised); border: 1px solid var(--border); }
 .msg.pet { align-self: flex-start; border-bottom-left-radius: 6px; }
 .msg.me { align-self: flex-end; border-bottom-right-radius: 6px; background: var(--pill-neutral-bg); border-color: transparent; }
@@ -148,9 +148,23 @@ h1 { font: 500 var(--fs-title)/1.15 var(--serif); letter-spacing: -0.01em; }
 .check .why, .check .natural { color: var(--muted); }
 .check .natural { margin-top: 6px; }
 .check .natural span { color: var(--text); }
-/* grammar questions: your question on the right, the answer as a card on the left */
-.msg.me.q .label, .msg.answer .label { font-size: var(--fs-small); font-weight: 600; color: var(--accent); }
-.msg.me.q .text { margin-top: 2px; font-size: 16px; line-height: 24px; }
+/* tabs: ねこ, Grammar, Hermes. A segmented control in the panel head; a dot while an answer is on its way,
+   an accent label when one arrived unseen */
+.chat-head { align-items: center; }
+.tabs { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--pill-neutral-bg); }
+.tab { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: none; font-weight: 500; color: var(--muted); cursor: pointer; transition: background-color var(--t-ui) ease, color var(--t-ui) ease; }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { background: var(--raised); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
+.tab.unread { color: var(--accent); font-weight: 600; }
+.tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.tab.unread .dot { animation: none; }
+@keyframes pulse { 50% { opacity: .3; } }
+.ask-empty { display: grid; gap: 10px; }
+.ask-empty .try { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-empty .chip-btn { height: auto; min-height: 28px; padding: 4px 10px; text-align: left; }
+
+/* questions: yours on the right, the answer as a card on the left */
+.msg.me.q .text { font-size: 16px; line-height: 24px; }
 .msg.answer { align-self: stretch; max-width: none; border-left: 3px solid var(--accent); border-radius: 6px 16px 16px 6px; }
 .msg.answer .body { margin-top: 6px; font-size: var(--fs-body); line-height: 22px; display: grid; gap: 6px; }
 .msg.answer .body ul { padding-left: 18px; list-style: disc; display: grid; gap: 2px; }
@@ -178,8 +192,7 @@ kbd { font: 500 var(--fs-small) var(--sans); padding: 1px 6px; border-radius: 4p
 .btn.primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
 .btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 85%, var(--ground)); }
 .btn.primary:disabled { background: var(--track); border-color: var(--track); color: var(--muted); }
-.btn.ask-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-primary); }
-.composer.asking textarea { border-color: var(--accent); font-size: 16px; }
+.composer.asking textarea { font-size: 16px; }
 .talk { min-width: 168px; touch-action: none; user-select: none; -webkit-user-select: none; }
 .talk.rec::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--negative); }
 
@@ -284,7 +297,7 @@ a.chip-btn[aria-disabled="true"] { pointer-events: none; color: var(--muted); }
   .stage-panel, .chat-panel { grid-column: span 12; }
   .stage-panel { height: 420px; }
   .chat-panel { height: auto; }
-  #chat { max-height: 56vh; }
+  .thread { max-height: 56vh; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ch-body { grid-template-columns: minmax(0, 1fr); }
@@ -306,11 +319,15 @@ a.chip-btn[aria-disabled="true"] { pointer-events: none; color: var(--muted); }
   .stage-panel { height: 300px; padding: 12px; }
   .keys { display: none; }
   .composer .talk { flex: 1; height: 48px; }
-  .composer #send, .composer #askBtn, .composer #chatBtn { height: 48px; }
+  .composer #send, .composer #newConv { height: 48px; }
+  .composer.asking #send { flex: 1; }
+  .chat-head #turnCount { display: none; }
+  .tab { padding: 0 12px; }
   .zh { font-size: 22px; line-height: 32px; }
   .review-list { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .track i, .btn, .chip-btn { transition: none; }
+  .track i, .btn, .chip-btn, .tab { transition: none; }
+  .tab .dot { animation: none; }
 }

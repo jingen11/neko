@@ -65,9 +65,28 @@
     </section>
 
     <section class="panel chat-panel">
-      <div class="head"><h2>Conversation</h2><span id="turnCount" class="meta">This visit</span></div>
-      <div id="chat" aria-live="polite">
+      <div class="head chat-head">
+        <div class="tabs" role="tablist" aria-label="Conversations">
+          <button id="tab-neko" class="tab" role="tab" type="button" aria-selected="true" aria-controls="chat" data-tab="neko"><span class="petName" lang="ja">ねこ</span><i class="dot" hidden></i></button>
+          <button id="tab-grammar" class="tab" role="tab" type="button" aria-selected="false" aria-controls="thread-grammar" tabindex="-1" data-tab="grammar">Grammar<i class="dot" hidden></i></button>
+          <button id="tab-casual" class="tab" role="tab" type="button" aria-selected="false" aria-controls="thread-casual" tabindex="-1" data-tab="casual">Hermes<i class="dot" hidden></i></button>
+        </div>
+        <span id="turnCount" class="meta">This visit</span>
+      </div>
+      <div id="chat" class="thread" role="tabpanel" aria-labelledby="tab-neko" aria-live="polite">
         <p id="chatEmpty" class="empty">Wake <span class="petName" lang="ja">ねこ</span> to hear today's first line.</p>
+      </div>
+      <div id="thread-grammar" class="thread" role="tabpanel" aria-labelledby="tab-grammar" aria-live="polite" hidden>
+        <div class="empty ask-empty">
+          <p>Ask about any grammar point, in English, Chinese or Japanese. Hermes answers on Claude and looks at your past mistakes. Follow-up questions see the earlier ones.</p>
+          <p class="try"><button class="chip-btn" type="button">When do I use に vs で?</button><button class="chip-btn" type="button">ていただけますか和てくれませんか有什么区别？</button></p>
+        </div>
+      </div>
+      <div id="thread-casual" class="thread" role="tabpanel" aria-labelledby="tab-casual" aria-live="polite" hidden>
+        <div class="empty ask-empty">
+          <p>Chat with Hermes, or ask about your own progress. It reads your notes and your textbook.</p>
+          <p class="try"><button class="chip-btn" type="button">What have I learnt this week?</button><button class="chip-btn" type="button">Which lesson covers the passive?</button></p>
+        </div>
       </div>
       <div class="composer">
         <label for="text" class="sr">Your reply in Japanese</label>
@@ -75,9 +94,8 @@
         <div class="actions">
           <button id="talk" class="btn primary talk" type="button" disabled>Hold to talk</button>
           <button id="send" class="btn" type="button" disabled>Send</button>
-          <button id="askBtn" class="btn ask-toggle" type="button" aria-pressed="false" disabled title="Ask a grammar question (answered by Hermes on Claude)">Ask grammar</button>
-          <button id="chatBtn" class="btn ask-toggle" type="button" aria-pressed="false" disabled title="Ask Hermes anything, such as what you've learnt this week (answered on the local model)">Ask Hermes</button>
-          <span class="keys"><kbd>Space</kbd> hold to talk · <kbd>Enter</kbd> send</span>
+          <button id="newConv" class="btn" type="button" hidden>New conversation</button>
+          <span id="keys" class="keys"><kbd>Space</kbd> hold to talk · <kbd>Enter</kbd> send</span>
         </div>
       </div>
     </section>
@@ -117,7 +135,7 @@
         <div id="drillResult" aria-live="polite"></div>
       </div>
       <ul id="review" class="review-list"></ul>
-      <p id="reviewEmpty" class="empty">Mistakes from this visit collect here, ready to practise. Earlier ones are in your <a href="/notes.html">notes</a>, or ask Hermes what you've been getting wrong.</p>
+      <p id="reviewEmpty" class="empty">Mistakes from this visit collect here, ready to practise. Earlier ones are in your <a href="/notes.html">notes</a>, or ask in the Hermes tab what you've been getting wrong.</p>
     </section>
 
     <section id="debug" class="panel debug" hidden>
