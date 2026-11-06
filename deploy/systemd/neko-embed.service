@@ -1,0 +1,15 @@
+[Unit]
+Description=neko textbook meaning search (llama.cpp + BGE-M3 embeddings)
+After=network.target
+
+[Service]
+User=jedev
+# CPU only (-ngl 0): a question takes ~25 ms, and the iGPU stays free for Qwen.
+ExecStart=/home/jedev/llama.cpp/build/bin/llama-server -m /home/jedev/models/bge-m3-Q8_0.gguf \
+  --embedding --pooling cls -c 4096 -b 4096 -ub 4096 -ngl 0 -t 4 \
+  --host 127.0.0.1 --port 8082
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

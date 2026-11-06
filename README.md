@@ -22,6 +22,7 @@ neko is a Fastify server that calls these local services:
 | sherpa-onnx offline WebSocket server | `ws://127.0.0.1:6006` | Japanese speech-to-text (ReazonSpeech or SenseVoice) |
 | VOICEVOX engine | `http://127.0.0.1:50021` | The pet's voice |
 | Hermes Agent API server | `http://127.0.0.1:8642` | ねこ's spoken replies (`neko` profile, with time and weather tools); questions (grammar on Claude, casual on the local model), answered from the vault (no fallback) |
+| llama.cpp (BGE-M3, `neko-embed`) | `http://127.0.0.1:8082` | Meaning search in the textbook tools (used by Hermes's textbook MCP server, not by neko; optional, exact search without it) |
 | MQTT broker (Zigbee2MQTT) | `MQTT_URL`, e.g. `mqtt://127.0.0.1:1883` | Home sensors: ねこ reacts when the front door opens or the window shakes (optional: off while `MQTT_URL` is empty) |
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
@@ -67,6 +68,24 @@ Each conversation turn makes two calls at once. The **grammar check** stays on l
 - no file, skill, memory or session tools (`agent.disabled_toolsets`), all skills off, `auxiliary.background_review.enabled: false`, `memory.memory_enabled` / `user_profile_enabled: false`, `max_turns: 20`
 
 Hermes can't enforce a JSON schema, so the reply's shape (ja, en, mood) is in the prompt and checked in code: a reply in plain Japanese is spoken as is (no English that turn), anything else is retried once. If Hermes fails, the check still shows, ねこ looks sick and the page says why. A turn takes about 5–25 s; tool calls add time. Known limit: the local model sometimes misreads 24-hour times (01:22 as 午後1時).
+
+### Textbook tools (MCP server)
+
+`textbook/` is a small MCP server (stdio) over your own textbook, transcribed into Markdown under `data/textbook/<book>/<unit>/` (not in git: the book is copyrighted, and so are the PDFs in `docs/`). One file per lesson follows the book's parts (基本课文, 语法解释, 表达及词语讲解, 应用课文, 练习, 生词表, 专栏); furigana is written `{起|お}きます` and `<!-- pdf 85 / book 68 -->` marks each page. The server loads every file into memory when it starts. Each search runs two ways and merges the rankings (reciprocal rank fusion):
+
+- **Exact text**, by scanning (a whole book is about 1 MB; a search takes a few ms). Best for particles and specific words.
+- **Meaning**, with BGE-M3 embeddings, for questions in other words, English or Chinese, and other verb forms ("我给了朋友礼物" finds the あげます grammar point). Each section, or each ~1200-character piece of a long one, is embedded once and saved in `data/textbook/.index/bge-m3.json`, keyed by a hash of its text. A search embeds only the question (~25 ms) and compares it with the saved vectors. Word lists and unit intros are left out of meaning search; grammar explanations get a small lift.
+
+The model runs as its own service, `neko-embed` (llama.cpp `llama-server --embedding`, `~/models/bge-m3-Q8_0.gguf` from `gpustack/bge-m3-GGUF`, CPU only, `127.0.0.1:8082`, about 0.6 GB RAM). If it is down, search falls back to exact text. After adding or editing lessons, run `cd textbook && npm run index` (about 75 ms a piece; 48 lessons ≈ 1,200 pieces ≈ 90 s); the MCP server also fills in missing vectors in the background when it starts.
+
+| Tool | What it returns |
+|---|---|
+| `search_textbook(query)` | Matching word-list entries, then the best sections with their lesson, page and matching lines. Japanese (kanji or kana) or Chinese; space-separated terms must all match. A one-character particle (で, を) only matches grammar headings that name it. |
+| `get_lesson(lesson, part?, heading?)` | The lesson outline with pages, or the full text of one part (`grammar`, `notes`, `dialogue`, `exercises`, `vocab`, …), or of one grammar point |
+| `lesson_vocab(lesson, through?)` | A lesson's word list, or every word up to that lesson |
+| `where_am_i()` | Your current lesson (`lesson: N` in the frontmatter of `~/vault/Japanese/Notes/Textbook.md`) and its outline |
+
+It is only in the `default` Hermes profile (`mcp_servers.textbook`: `command: node`, `args: [<repo>/textbook/src/index.ts]`). Hermes starts it, so after adding lessons, restart the gateway (`sudo hermes gateway restart`). ねこ (`neko`) and grammar questions (`pro`) don't have it; casual questions in the Ask box can check the book and cite lesson and page. Setup: `cd textbook && npm install && npm run index`; test with `hermes mcp test textbook`. `lesson_vocab` with `through` lists at most the latest 300 words, so it fits the local model's context.
 
 ### Weekly review (Hermes cron)
 
@@ -226,6 +245,7 @@ server/                Fastify server
   experiment.md        results of the grammar-checking experiment
   data/                SQLite database (pet stats, streak, challenges) and voice-test recordings (not in git)
 web/                   PixiJS pet app (Vite): index.html (practice), notes.html (Notes); build output in web/dist
+textbook/              MCP server: search the transcribed textbook (data/textbook/, not in git)
 deploy/systemd/        service units
 deploy/hermes/         Hermes weekly review prompt
 ```
