@@ -61,8 +61,17 @@ async function hybridSearch(query: string, limit: number): Promise<Result[]> {
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
 const sectionTitle = (s: Section) => [s.part, s.heading].filter(Boolean).join(" › ");
-const missingLesson = (n: number) =>
+const missingLesson = (n: number | string) =>
   text(`Lesson ${n} is not transcribed. Transcribed lessons: ${lessonList.join(", ") || "none"}.`);
+
+// Lessons are numbered through the whole series (volume 2 starts where volume 1 ends), but the local
+// model often writes them as "第40課" or "v2 40". Accept those too: the 第N課 number, else the last number.
+const lessonArg = z.union([z.number().int(), z.string()]).describe("Lesson number (第N課), e.g. 40");
+function lessonNumber(v: number | string): number | null {
+  if (typeof v === "number") return v;
+  const m = v.match(/第\s*(\d+)\s*[課课]/) ?? v.match(/(\d+)(?!.*\d)/);
+  return m ? Number(m[1]) : null;
+}
 
 function outline(l: Lesson): string {
   const out = [`${l.book} 第${l.lesson}課 ${l.title} (book pages ${l.bookPages})`];
@@ -114,14 +123,15 @@ server.registerTool("get_lesson", {
     "With `part`, returns that part's full text: basic (基本课文), grammar (语法解释), notes (表达及词语讲解), " +
     "dialogue (应用课文), exercises (练习), vocab (生词表), column (专栏). `heading` narrows to one grammar point.",
   inputSchema: {
-    lesson: z.number().int().describe("Lesson number (第N課)"),
+    lesson: lessonArg,
     part: z.string().optional().describe("Part name in English or Chinese, e.g. 'grammar' or '语法解释'"),
     heading: z.string().optional().describe("Text of a ### heading inside the part, e.g. 'から' or '2.'"),
   },
   annotations: { readOnlyHint: true },
-}, async ({ lesson, part, heading }) => {
-  const l = tb.lessons.get(lesson);
-  if (!l) return missingLesson(lesson);
+}, async ({ lesson: arg, part, heading }) => {
+  const lesson = lessonNumber(arg);
+  const l = lesson === null ? undefined : tb.lessons.get(lesson);
+  if (!l) return missingLesson(arg);
   if (!part) return text(outline(l));
   let secs = matchPart(l, part);
   if (!secs.length) return text(`No part "${part}" in lesson ${lesson}.\n\n${outline(l)}`);
@@ -141,12 +151,13 @@ const VOCAB_CAP = 300;
 server.registerTool("lesson_vocab", {
   description: "The word list (生词表) of one textbook lesson, or of every lesson up to and including it with `through: true`.",
   inputSchema: {
-    lesson: z.number().int().describe("Lesson number (第N課)"),
+    lesson: lessonArg,
     through: z.boolean().optional().describe("Include all earlier transcribed lessons too"),
   },
   annotations: { readOnlyHint: true },
-}, async ({ lesson, through }) => {
-  if (!tb.lessons.has(lesson)) return missingLesson(lesson);
+}, async ({ lesson: arg, through }) => {
+  const lesson = lessonNumber(arg);
+  if (lesson === null || !tb.lessons.has(lesson)) return missingLesson(arg);
   const all = tb.words.filter((w) => (through ? w.lesson <= lesson : w.lesson === lesson));
   // Every word up to a late lesson is thousands of lines, too much for the local model: keep the latest.
   const words = all.slice(-VOCAB_CAP);

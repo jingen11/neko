@@ -1,3 +1,4 @@
+import path from "node:path";
 import { config } from "./config.ts";
 import type { AskHistory, AskKind } from "../../shared/protocol.ts";
 
@@ -110,7 +111,7 @@ async function askHermes(question: string, kind: QuestionKind): Promise<Answer> 
         {
           role: "system",
           content: `${brief(kind)}
-The learner's record is in the Obsidian vault at ${config.vaultDir}: Daily/<date>.md holds every sentence they said that day with its mistakes, their translations, listening trouble and past questions. Read the notes relevant to the question before answering.`,
+The learner's record is in the Obsidian vault. ${path.join(config.vaultDir, "Daily")}/<YYYY-MM-DD>.md holds every sentence they said that day with its mistakes, their translations, listening trouble and past questions. Read the notes relevant to the question before answering.`,
         },
         ...followUps(kind),
         questionTurn(question),
