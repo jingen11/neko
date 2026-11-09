@@ -26,6 +26,7 @@ neko is a Fastify server that calls these local services:
 | Hermes Agent API server | `http://127.0.0.1:8642` | ねこ's spoken replies (`neko` profile, with time and weather tools); questions (grammar on Claude, casual on the local model), answered from the vault (no fallback) |
 | llama.cpp (BGE-M3, `neko-embed`) | `http://127.0.0.1:8082` | Meaning search in the textbook tools (used by Hermes's textbook MCP server, not by neko; optional, exact search without it) |
 | MQTT broker (Zigbee2MQTT) | `MQTT_URL`, e.g. `mqtt://127.0.0.1:1883` | Home sensors: ねこ reacts when the front door opens or the window shakes (optional: off while `MQTT_URL` is empty) |
+| ip2location.io | `https://api.ip2location.io` | Where each client is, from its public IP (`server/src/location.ts`): the address comes from `CF-Connecting-IP` behind the Cloudflare Tunnel, else the socket; a LAN address means home, so the box locates itself. Cached 6 h per address, logged on connect (optional: off while `IP2LOCATION_KEY` is empty) |
 
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
 
@@ -66,10 +67,35 @@ Each conversation turn makes two calls at once. The **grammar check** stays on l
 ねこ is a pet and tutor with a brain but no memory: it gets only the recent conversation that neko sends. Only the neko server writes your record. The `neko` profile is set up for that, in `~/.hermes/profiles/neko/`:
 
 - cloned from `default`, on the local model; `SOUL.md` replaced with a short note (follow the app's instructions and format, use tools for real-world facts)
-- MCP servers: `neko_time` (`mcp-server-time`, `--local-timezone Asia/Kuala_Lumpur`) and `weather` (`weather-open-meteo-mcp`, Open-Meteo, no key), installed under `~/.local/share/mcp/`. The time server is named `neko_time`, not `time`: one gateway shares MCP servers by name across profiles, so a `time` server in the global `~/.hermes/config.yaml` would take its place (and its failures).
+- MCP servers: `neko_time` (`mcp-server-time`, `--local-timezone Asia/Kuala_Lumpur`, installed under `~/.local/share/mcp/`) and `neko_world` (this repo's `world/`, see [World tools](#world-tools-mcp-server)). The time server is named `neko_time`, not `time`: one gateway shares MCP servers by name across profiles, so a `time` server in the global `~/.hermes/config.yaml` would take its place (and its failures).
 - no file, skill, memory or session tools (`agent.disabled_toolsets`), all skills off, `auxiliary.background_review.enabled: false`, `memory.memory_enabled` / `user_profile_enabled: false`, `max_turns: 20`
 
 Hermes can't enforce a JSON schema, so the reply's shape (ja, en, mood) is in the prompt and checked in code: a reply in plain Japanese is spoken as is (no English that turn), anything else is retried once. If Hermes fails, the check still shows, ねこ looks sick and the page says why. A turn takes about 5–25 s; tool calls add time. Known limit: the local model sometimes misreads 24-hour times (01:22 as 午後1時).
+
+### World tools (MCP server)
+
+`world/` is a small MCP server (stdio) with ねこ's tools for the world right now. ねこ decides when to use them; nothing about the learner's location goes into its prompt.
+
+- `where_am_i`: where the learner is (city, region, country, coordinates, IANA time zone, home or away). It reads `GET /api/location` on the neko server, which locates the connected board from its public IP with ip2location.io (`server/src/location.ts`, needs `IP2LOCATION_KEY`).
+- `get_weather`: now and a daily forecast (1–7 days, today/tomorrow in the place's own time) for a `place` name or `latitude`/`longitude`, from Open-Meteo (no key). A name can carry its region and country to pick between same-named places ("Paris, Texas, US"). Names must be in Latin script ("Tokyo", not "東京"): Open-Meteo's place search finds nothing in Japanese script.
+
+The coordinates come from ip2location.io's answer; the neko server names the IANA time zone from them offline (`@photostructure/tz-lookup`). A name goes through Open-Meteo's place search first, because its forecast takes coordinates.
+
+"The weather here?" is `where_am_i` then `get_weather` with its coordinates; "the weather in London?" is `get_weather("London")`.
+
+Setup on the box: `cd world && npm install`, then in `~/.hermes/profiles/neko/config.yaml` replace the `weather` server with:
+
+```yaml
+  neko_world:
+    command: node
+    args:
+      - /home/jedev/neko/world/src/index.ts   # this repo's path on the box
+    env:
+      NEKO_URL: http://127.0.0.1:8081
+    enabled: true
+```
+
+and restart the Hermes gateway. Keep the name unique (`neko_world`): the gateway shares MCP servers by name across profiles.
 
 ### Textbook tools (MCP server)
 
@@ -143,7 +169,7 @@ Voice credit: `VOICEVOX:<character name>` for whichever voice the pet uses.
 ```bash
 cd web && npm install && npm run build      # builds the pet app into web/dist (served by neko)
 cd ../server
-cp .env.example .env     # set NEKO_TZ, VOICEVOX_SPEAKER, NEKO_LEVEL, ...
+cp .env.example .env     # set IP2LOCATION_KEY, VOICEVOX_SPEAKER, NEKO_LEVEL, ...
 npm install
 npm start                # http://127.0.0.1:8081  (pet at /, lab page at /lab.html)
 ```
@@ -167,7 +193,7 @@ ssh -L 8081:localhost:8081 <box>
 | `VOICEVOX_SPEAKER` | `3` | style id; list with `GET /api/voices` |
 | `NEKO_LEVEL` | `N4` | JLPT level the pet speaks at (N5–N1) |
 | `NEKO_PET_NAME` | `ねこ` | The pet's name |
-| `NEKO_TZ` | box time zone | Your time zone (e.g. `Asia/Tokyo`): the pet sleeps 23:00–07:00 local time, and "today" for the streak |
+| `IP2LOCATION_KEY` | (off) | ip2location.io key. Locates the board from its public IP; its time zone (e.g. `Asia/Tokyo`) is the learner's: the pet sleeps 23:00–07:00 there, and it decides "today" for the streak and the times in notes. Without it, or before the board is located, the box's own time zone |
 | `NEKO_VAULT_DIR` | `~/vault/Japanese` | Where learning records are written; empty turns it off |
 | `HERMES_URL` | `http://127.0.0.1:8642` | Hermes API server |
 | `HERMES_KEY` | (none) | `API_SERVER_KEY` of Hermes's default profile (`~/.hermes/.env`); casual questions |
