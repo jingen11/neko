@@ -15,6 +15,12 @@
 #include "freertos/semphr.h"
 #include "esp_heap_caps.h"
 #include "esp_codec_dev.h"
+#include "driver/i2c_master.h"
+#include "driver/gpio.h"
+#include "driver/ledc.h"
+#include "driver/rtc_io.h"
+#include "esp_pm.h"
+#include "esp_sleep.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_random.h"
@@ -200,12 +206,13 @@ GIF_EXTERN(sick) GIF_EXTERN(angry) GIF_EXTERN(yawn)
 // ── the pet ──────────────────────────────────────────────────────────────────
 
 #define CAT_X (BSP_LCD_H_RES / 2) // where the cat's feet go on screen
-#define CAT_FEET_Y 178
+#define CAT_FEET_Y 170
+#define PAD 16 // keeps text out of the panel's rounded corners
 
 typedef struct {
     const char *name;
     const uint8_t *start, *end;
-    int scale;          // screen pixels per art pixel
+    int scale;          // LVGL scale: 256 = one screen pixel per art pixel
     lv_image_dsc_t dsc; // filled in at start
     int16_t fx, fy;     // the feet in the GIF, found from its first frame
     bool feet_known;
@@ -213,9 +220,11 @@ typedef struct {
 
 #define SPRITE(n, s) {.name = #n, .start = n##_gif_start, .end = n##_gif_end, .scale = s}
 static sprite_t sprites[] = {
-    SPRITE(idle, 3), SPRITE(listen, 3), SPRITE(think, 3), SPRITE(talk, 3), SPRITE(happy, 3),
-    SPRITE(sad, 3), SPRITE(eat, 3), SPRITE(sleep, 3), SPRITE(petted, 2), // stretched out: 2x to fit
-    SPRITE(sleepy, 3), SPRITE(sick, 3), SPRITE(angry, 3), SPRITE(yawn, 3),
+    // 2x: fits between the status rows and ねこ's text. petted.gif draws the cat 1.5x bigger
+    // than the others, so it gets 2/3 of that (1.33x) to keep the cat the same size.
+    SPRITE(idle, 512), SPRITE(listen, 512), SPRITE(think, 512), SPRITE(talk, 512), SPRITE(happy, 512),
+    SPRITE(sad, 512), SPRITE(eat, 512), SPRITE(sleep, 512), SPRITE(petted, 341),
+    SPRITE(sleepy, 512), SPRITE(sick, 512), SPRITE(angry, 512), SPRITE(yawn, 512),
 };
 #define N_SPRITES (sizeof sprites / sizeof sprites[0])
 
@@ -266,7 +275,7 @@ static void show(int i)
     if (!s->feet_known) find_feet(s);
     lv_gif_set_loop_count(cat, i == sprite_index("yawn") ? 1 : 0); // 0 = forever
     lv_image_set_pivot(cat, s->fx, s->fy);
-    lv_image_set_scale(cat, LV_SCALE_NONE * s->scale);
+    lv_image_set_scale(cat, s->scale);
     lv_obj_set_pos(cat, CAT_X - s->fx, CAT_FEET_Y - s->fy);
 }
 
@@ -295,9 +304,12 @@ static void on_cat_event(lv_event_t *e)
 }
 
 /** Lip-sync while talking, and now and then a yawn while drowsy. Runs in the LVGL task. */
+static bool mouth_paused;
+static bool screen_dark(void);
+
 static void tick(lv_timer_t *t)
 {
-    static bool mouth_paused;
+    if (screen_dark()) return; // the cat is paused while the screen is off
     // talking: the mouth moves while the voice sounds and rests in silence (as in the web app)
     bool pause = shown == sprite_index("talk") && !voice_sounding();
     if (pause != mouth_paused) {
@@ -344,6 +356,163 @@ static void ui_set(lv_obj_t *label, const char *text)
     }
 }
 
+// ── power: battery (AXP2101) and screen sleep ────────────────────────────────
+//
+// The AXP2101 is only read (power source, charging, charge %); its power rails stay
+// as the board set them. While awake, the CPU slows to 80 MHz when idle. On battery,
+// the screen dims after a while without use, and later the whole board goes into
+// deep sleep (Wi-Fi, screen, speaker amp and codecs off). A touch wakes it: it
+// restarts, reconnects and ねこ greets you. On USB it never sleeps.
+
+#define AXP2101_ADDR 0x34
+#define BRIGHT_ON 80
+#define BRIGHT_DIM 15
+
+#define BAR_ON 0x636361
+#define BAR_OFF 0xd9d9d6
+
+static i2c_master_dev_handle_t pmu;
+static lv_obj_t *wifi_bars[4];
+static volatile bool wifi_up; // has an IP
+static lv_obj_t *lbl_batt;
+static bool on_battery;
+static int64_t last_activity_us;
+static enum { SCREEN_ON, SCREEN_DIM, SCREEN_OFF } screen = SCREEN_ON;
+static bool swallow_touch; // a touch on a dark screen only wakes it
+static bool going_to_sleep;
+
+static bool screen_dark(void) { return screen == SCREEN_OFF; }
+
+/** Everything off, then deep sleep until the screen is touched. Runs in its own task. */
+static void sleep_task(void *arg)
+{
+    ESP_LOGI(TAG, "going to sleep");
+    if (ws) esp_websocket_client_close(ws, pdMS_TO_TICKS(1000));
+    esp_wifi_stop();
+    if (speaker) esp_codec_dev_close(speaker);
+    if (mic) esp_codec_dev_close(mic);
+
+    // keep the backlight and the speaker amp off while asleep (their pins would float)
+    ledc_stop(LEDC_LOW_SPEED_MODE, CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH, 0);
+    const gpio_num_t held[] = {BSP_LCD_BACKLIGHT, BSP_POWER_AMP_IO};
+    for (int i = 0; i < 2; i++) {
+        gpio_set_direction(held[i], GPIO_MODE_OUTPUT);
+        gpio_set_level(held[i], 0);
+        gpio_hold_en(held[i]);
+    }
+    gpio_deep_sleep_hold_en();
+
+    // the touch controller pulls its interrupt line low on a touch
+    rtc_gpio_pullup_en(BSP_LCD_TOUCH_INT);
+    rtc_gpio_pulldown_dis(BSP_LCD_TOUCH_INT);
+    esp_sleep_enable_ext0_wakeup(BSP_LCD_TOUCH_INT, 0);
+    esp_deep_sleep_start();
+}
+
+static int pmu_read(uint8_t reg)
+{
+    uint8_t v;
+    if (!pmu || i2c_master_transmit_receive(pmu, &reg, 1, &v, 1, 50) != ESP_OK) return -1;
+    return v;
+}
+
+static void pmu_set_bits(uint8_t reg, uint8_t bits)
+{
+    int v = pmu_read(reg);
+    if (v < 0 || (v & bits) == bits) return;
+    uint8_t w[2] = {reg, (uint8_t)(v | bits)};
+    i2c_master_transmit(pmu, w, 2, 50);
+}
+
+static void pmu_start(void)
+{
+    i2c_device_config_t cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = AXP2101_ADDR,
+        .scl_speed_hz = 400000,
+    };
+    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &cfg, &pmu) != ESP_OK || pmu_read(0x00) < 0) {
+        ESP_LOGW(TAG, "battery chip not found");
+        pmu = NULL;
+        return;
+    }
+    pmu_set_bits(0x18, 1 << 3); // fuel gauge on
+    pmu_set_bits(0x30, 1 << 0); // battery voltage measurement on (as Waveshare's demo)
+}
+
+/** Call with the display locked. */
+static void screen_set(int state)
+{
+    if (state == screen) return;
+    if (screen == SCREEN_OFF) { // waking: let the cat move again (tick re-pauses a silent mouth)
+        mouth_paused = false;
+        lv_gif_resume(cat);
+    }
+    if (state == SCREEN_OFF) lv_gif_pause(cat);
+    screen = state;
+    bsp_display_brightness_set(state == SCREEN_ON ? BRIGHT_ON : state == SCREEN_DIM ? BRIGHT_DIM : 0);
+}
+
+/** Something happened worth looking at: keep the screen on. Call with the display locked. */
+static void activity(void)
+{
+    last_activity_us = esp_timer_get_time();
+    screen_set(SCREEN_ON);
+}
+
+/** Battery readout and screen sleep, every second. Runs in the LVGL task. */
+static void power_tick(lv_timer_t *t)
+{
+    if (voice_sounding() || mic_wanted) last_activity_us = esp_timer_get_time();
+
+    int s1 = pmu_read(0x00), s2 = pmu_read(0x01), pct = pmu_read(0xA4);
+    if (s1 < 0) {
+        on_battery = false;
+        lv_obj_set_hidden(lbl_batt, true);
+    } else {
+        bool usb = s1 & (1 << 5), batt = s1 & (1 << 3);
+        bool charging = s2 >= 0 && ((s2 >> 5) & 3) == 1;
+        on_battery = batt && !usb;
+        if (pct < 0 || pct > 100) pct = 0;
+        char buf[40];
+        if (!batt) {
+            snprintf(buf, sizeof buf, LV_SYMBOL_USB);
+        } else {
+            const char *icon = pct > 80   ? LV_SYMBOL_BATTERY_FULL
+                               : pct > 55 ? LV_SYMBOL_BATTERY_3
+                               : pct > 30 ? LV_SYMBOL_BATTERY_2
+                               : pct > 10 ? LV_SYMBOL_BATTERY_1
+                                          : LV_SYMBOL_BATTERY_EMPTY;
+            if (charging) snprintf(buf, sizeof buf, LV_SYMBOL_CHARGE "%d%%", pct);
+            else snprintf(buf, sizeof buf, "%d%% %s", pct, icon);
+        }
+        lv_label_set_text(lbl_batt, buf);
+        lv_obj_set_style_text_color(lbl_batt, lv_color_hex(on_battery && pct <= 15 ? 0xb3261e : 0x636361), 0);
+        lv_obj_set_hidden(lbl_batt, false);
+    }
+
+    // Wi-Fi signal: 0–4 bars
+    int rssi = -127;
+    int bars = 0;
+    if (wifi_up && esp_wifi_sta_get_rssi(&rssi) == ESP_OK)
+        bars = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
+    for (int i = 0; i < 4; i++)
+        lv_obj_set_style_bg_color(wifi_bars[i], lv_color_hex(i < bars ? BAR_ON : BAR_OFF), 0);
+
+    int64_t idle = esp_timer_get_time() - last_activity_us;
+    if (!on_battery) {
+        screen_set(SCREEN_ON);
+    } else if (idle > CONFIG_NEKO_SLEEP_S * 1000000LL) {
+        if (!going_to_sleep) {
+            going_to_sleep = true;
+            screen_set(SCREEN_OFF);
+            xTaskCreate(sleep_task, "sleep", 4096, NULL, 5, NULL);
+        }
+    } else if (idle > CONFIG_NEKO_SCREEN_DIM_S * 1000000LL) {
+        screen_set(SCREEN_DIM);
+    }
+}
+
 static void send_touch(const char *gesture)
 {
     if (!ws_ready()) return;
@@ -356,6 +525,14 @@ static void on_screen_event(lv_event_t *e)
 {
     // tap: pet the cat. hold: talk (push-to-talk), let go to send.
     lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        swallow_touch = screen == SCREEN_OFF; // a dark screen: this touch only wakes it
+        activity();
+    }
+    if (swallow_touch) {
+        if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) swallow_touch = false;
+        return;
+    }
     if (code == LV_EVENT_SHORT_CLICKED) {
         send_touch("pet");
     } else if (code == LV_EVENT_LONG_PRESSED && ws_ready() && mic) {
@@ -375,7 +552,7 @@ static lv_obj_t *add_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t c
     lv_obj_set_style_text_font(l, font, 0);
     lv_obj_set_style_text_color(l, color, 0);
     lv_obj_set_style_text_line_space(l, 2, 0);
-    lv_obj_set_width(l, BSP_LCD_H_RES - 16);
+    lv_obj_set_width(l, BSP_LCD_H_RES - 2 * PAD);
     lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
@@ -408,19 +585,52 @@ static void ui_init(void)
     lv_obj_add_event_cb(cat, on_cat_event, LV_EVENT_READY, NULL);
     show(0);
 
-    lbl_top = add_label(scr, font_ja, lv_color_hex(0x636361), 6);
-    lbl_ja = add_label(scr, font_ja, lv_color_hex(0x1f201d), CAT_FEET_Y + 8);
-    lbl_en = add_label(scr, &lv_font_montserrat_14, lv_color_hex(0x636361), CAT_FEET_Y + 64);
-    lv_label_set_text(lbl_top, "起動中…");
+    // row 1: recording dot, Wi-Fi signal, battery (centred: the panel's corners are rounded)
+    lv_obj_t *status = lv_obj_create(scr);
+    lv_obj_remove_style_all(status);
+    lv_obj_set_size(status, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(status, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(status, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(status, 10, 0);
+    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_clickable(status, false);
 
-    rec_dot = lv_obj_create(scr); // shows while the mics are on
-    lv_obj_set_size(rec_dot, 12, 12);
+    rec_dot = lv_obj_create(status); // shows while the mics are on
+    lv_obj_remove_style_all(rec_dot);
+    lv_obj_set_size(rec_dot, 10, 10);
     lv_obj_set_style_radius(rec_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(rec_dot, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(rec_dot, lv_color_hex(0xe5484d), 0);
-    lv_obj_set_style_border_width(rec_dot, 0, 0);
-    lv_obj_align(rec_dot, LV_ALIGN_TOP_RIGHT, -10, 10);
     lv_obj_set_clickable(rec_dot, false);
     lv_obj_set_hidden(rec_dot, true);
+
+    lv_obj_t *wifi = lv_obj_create(status); // four bars, like a phone
+    lv_obj_remove_style_all(wifi);
+    lv_obj_set_size(wifi, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(wifi, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(wifi, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    lv_obj_set_style_pad_column(wifi, 2, 0);
+    lv_obj_set_clickable(wifi, false);
+    for (int i = 0; i < 4; i++) {
+        wifi_bars[i] = lv_obj_create(wifi);
+        lv_obj_remove_style_all(wifi_bars[i]);
+        lv_obj_set_size(wifi_bars[i], 4, 4 + 3 * i);
+        lv_obj_set_style_radius(wifi_bars[i], 1, 0);
+        lv_obj_set_style_bg_opa(wifi_bars[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(wifi_bars[i], lv_color_hex(BAR_OFF), 0);
+        lv_obj_set_clickable(wifi_bars[i], false);
+    }
+
+    lbl_batt = lv_label_create(status);
+    lv_obj_set_style_text_font(lbl_batt, &lv_font_montserrat_14, 0);
+    lv_obj_set_clickable(lbl_batt, false);
+    lv_label_set_text(lbl_batt, "");
+
+    // row 2: the pet's health (or how the connection is going)
+    lbl_top = add_label(scr, font_ja, lv_color_hex(0x636361), 30);
+    lbl_ja = add_label(scr, font_ja, lv_color_hex(0x1f201d), CAT_FEET_Y + 8);
+    lbl_en = add_label(scr, &lv_font_montserrat_14, lv_color_hex(0x636361), CAT_FEET_Y + 60);
+    lv_label_set_text(lbl_top, "起動中…");
 
     fix_card = lv_label_create(scr); // the check of what the learner said
     lv_obj_set_style_text_font(fix_card, font_ja, 0);
@@ -428,13 +638,17 @@ static void ui_init(void)
     lv_obj_set_style_radius(fix_card, 8, 0);
     lv_obj_set_style_bg_opa(fix_card, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(fix_card, 6, 0);
-    lv_obj_set_width(fix_card, BSP_LCD_H_RES - 16);
+    lv_obj_set_width(fix_card, BSP_LCD_H_RES - 2 * PAD + 8);
     lv_label_set_long_mode(fix_card, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_align(fix_card, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(fix_card, LV_ALIGN_TOP_MID, 0, 8);
     lv_obj_set_clickable(fix_card, false);
     lv_obj_set_hidden(fix_card, true);
 
     lv_timer_create(tick, 50, NULL);
+    pmu_start();
+    last_activity_us = esp_timer_get_time();
+    bsp_display_brightness_set(BRIGHT_ON);
+    lv_timer_create(power_tick, 1000, NULL);
     bsp_display_unlock();
 }
 
@@ -456,7 +670,7 @@ static void handle_message(const char *json, size_t len)
         const char *anim = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "anim"));
         cJSON *s = cJSON_GetObjectItem(msg, "stats");
         if (s) {
-            snprintf(buf, sizeof buf, "ごきげん %d  おなか %d  %d日",
+            snprintf(buf, sizeof buf, "♥%d  おなか%d  %d日",
                      num(s, "happiness"), 100 - num(s, "hunger"), num(s, "streak"));
         }
         if (bsp_display_lock(100)) {
@@ -468,6 +682,7 @@ static void handle_message(const char *json, size_t len)
         const char *ja = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "ja"));
         const char *en = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "en"));
         if (bsp_display_lock(100)) {
+            activity();
             lv_label_set_text(lbl_ja, ja ? ja : "");
             lv_label_set_text(lbl_en, en ? en : "");
             bsp_display_unlock();
@@ -496,6 +711,7 @@ static void handle_message(const char *json, size_t len)
         }
         if (point && n < (int)sizeof buf) snprintf(buf + n, sizeof buf - n, "\n%s", point);
         if (bsp_display_lock(100)) {
+            activity();
             if (ok || shown_n == 0) fix_show("◎ ばっちり！", true, 3000);
             else fix_show(buf, false, 12000);
             bsp_display_unlock();
@@ -594,11 +810,13 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_up = false;
         ui_set(lbl_top, "Wi-Fi 再接続中…");
         vTaskDelay(pdMS_TO_TICKS(2000));
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = data;
+        wifi_up = true;
         ESP_LOGI(TAG, "IP " IPSTR, IP2STR(&e->ip_info.ip));
         ui_set(lbl_top, "ボックスに接続中…");
         ws_start();
@@ -625,6 +843,14 @@ static void wifi_start(void)
 
 void app_main(void)
 {
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) ESP_LOGI(TAG, "woken by a touch");
+    gpio_hold_dis(BSP_LCD_BACKLIGHT);
+    gpio_hold_dis(BSP_POWER_AMP_IO);
+    gpio_deep_sleep_hold_dis();
+    rtc_gpio_deinit(BSP_LCD_TOUCH_INT); // back to a normal pin for the touch driver
+    esp_pm_config_t pm = {.max_freq_mhz = 240, .min_freq_mhz = 80, .light_sleep_enable = false};
+    esp_pm_configure(&pm);
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
