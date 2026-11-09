@@ -22,8 +22,10 @@ const server = new McpServer({ name: "neko-world", version: "0.1.0" });
 server.registerTool("where_am_i", {
   description:
     "Where the learner is right now: city, region, country, coordinates and time zone, and whether they are at home. " +
-    "Use it before answering about 'here' (the weather here, the time here): pass its coordinates (or place) to " +
-    "get_weather, or its time zone to the time tool. It comes from their device's internet address, so the city can be approximate.",
+    "The date and time zone in your system prompt are the server's, not the learner's: the learner may be elsewhere. " +
+    "Call this first whenever the answer depends on where the learner is or their local time (the time now, today's date, " +
+    "the weather here), and use its time zone with the time tool and its coordinates (or place) with get_weather. " +
+    "It comes from their device's internet address, so the city can be approximate.",
   inputSchema: {},
   annotations: { readOnlyHint: true },
 }, async () => {
