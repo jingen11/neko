@@ -4,6 +4,7 @@ import type { ChallengeResult } from "../../shared/protocol.ts";
 import { config } from "./config.ts";
 import { localDay } from "./pet.ts";
 import type { Correction, Mistake } from "./tutor.ts";
+import { learnerTimeZone } from "./location.ts";
 
 /**
  * Learning records go to the Obsidian vault only. neko appends each event to the day's note once and
@@ -17,8 +18,9 @@ import type { Correction, Mistake } from "./tutor.ts";
 
 const DAILY = "Daily";
 
-const clockFmt = new Intl.DateTimeFormat("en-GB", { timeZone: config.tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
-const clock = (t: number) => clockFmt.format(t);
+// Note times in the learner's time zone, like the note's date (localDay).
+const clock = (t: number) =>
+  new Intl.DateTimeFormat("en-GB", { timeZone: learnerTimeZone(), hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(t);
 const oneLine = (s: string) => s.replace(/\s*\n\s*/g, " ").trim();
 
 /** Append one entry to the day's note, starting the note if it's the first entry today. */

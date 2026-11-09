@@ -11,6 +11,7 @@ import { answerQuestion, askHistory, resetConversation, type QuestionKind } from
 import * as records from "./records.ts";
 import type { SensorAlert } from "./sensors.ts";
 import { petReply, petTurn } from "./tutor.ts";
+import { locate, noteLocation, type Location } from "./location.ts";
 
 /**
  * The pet's "brain" for connected clients (browser now, ESP32 board later).
@@ -26,6 +27,8 @@ interface Client {
   micRate: number;
   micBytes: number;
   busy: boolean;
+  ip: string; // its public address (or LAN address at home), from the WebSocket request
+  location?: Location; // where it is, from ip (location.ts)
 }
 
 // The Ask conversations are shared by every web client (a reload or a second tab sees the same one), so
@@ -192,6 +195,7 @@ async function onMessage(c: Client, msg: ClientMessage) {
   switch (msg.type) {
     case "hello": {
       c.hello = msg;
+      if (c.location) noteLocation(c.location, msg.client); // located before it said what it is
       log.info(`${msg.client} connected (${msg.deviceId}), voice at ${msg.audioRate} Hz`);
       if (msg.client === "web") for (const kind of ["grammar", "casual"] as const) send(c, askHistory(kind, asking.has(kind)));
       const stats = pet.stats();
@@ -233,10 +237,32 @@ async function onMessage(c: Client, msg: ClientMessage) {
   }
 }
 
-export function attach(ws: WebSocket, logger: FastifyBaseLogger) {
+let lastLocated: Client | null = null;
+
+/**
+ * Where the learner is: the connected board's location (it travels with them), else the client located
+ * most recently. For the world tools' where_am_i (GET /api/location).
+ */
+export function learnerLocation(): { client: string; location: Location } | null {
+  const board = [...clients].find((c) => c.hello?.client === "board" && c.location);
+  const c = board ?? lastLocated;
+  return c?.location ? { client: c.hello?.client ?? "web", location: c.location } : null;
+}
+
+export function attach(ws: WebSocket, logger: FastifyBaseLogger, ip: string) {
   log = logger;
-  const c: Client = { id: randomUUID(), ws, mic: null, micRate: 16000, micBytes: 0, busy: false };
+  const c: Client = { id: randomUUID(), ws, mic: null, micRate: 16000, micBytes: 0, busy: false, ip };
   clients.add(c);
+  locate(ip)
+    .then((loc) => {
+      if (!loc) return;
+      c.location = loc;
+      lastLocated = c;
+      noteLocation(loc, c.hello?.client);
+      const where = [loc.city, loc.region, loc.country].filter(Boolean).join(", ");
+      log.info(`${c.hello?.client ?? "client"} (${ip}) is ${loc.home ? "at home" : "away"}: ${where} (${loc.timeZone || `UTC${loc.utcOffset}`})`);
+    })
+    .catch((err) => log.warn({ err }, `couldn't locate ${ip}`));
   ws.on("message", (data, isBinary) => {
     const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
     if (isBinary) {
