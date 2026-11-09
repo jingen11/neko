@@ -1,0 +1,17 @@
+menu "neko"
+    config NEKO_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+    config NEKO_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+    config NEKO_WS_URL
+        string "Box WebSocket URL"
+        default "ws://192.168.1.10:8081/ws"
+        help
+            The neko server's /ws endpoint on the box's LAN address.
+    config NEKO_VOLUME
+        int "Speaker volume (0-100)"
+        range 0 100
+        default 70
+endmenu

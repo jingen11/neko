@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { config } from "./config.ts";
 import type { ChatMessage } from "./llm.ts";
 
@@ -53,6 +54,9 @@ export async function hermesJson<T>(
   const [first, ...rest] = messages;
   const system = first?.role === "system" ? first.content : "";
   const others = first?.role === "system" ? rest : messages;
+  // Hermes keeps one session per system message. A fresh one each call: the caller already sends the recent
+  // conversation, and a long-lived session fills up with old answers the model copies instead of using its tools.
+  const session = `\n\n(Request ${randomUUID().slice(0, 8)})`;
   let problem = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     // On the retry, say what was wrong. (This also changes the system message, so Hermes starts a fresh session.)
@@ -65,7 +69,7 @@ export async function hermesJson<T>(
         model: "hermes-agent", // the profile decides the model
         stream: false,
         model_options: { reasoning: { enabled: false } },
-        messages: [{ role: "system", content: system + formatRule(schema) + note }, ...others],
+        messages: [{ role: "system", content: system + formatRule(schema) + note + session }, ...others],
       }),
     });
     const body = await res.json().catch(() => null);
