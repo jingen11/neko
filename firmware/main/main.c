@@ -372,7 +372,7 @@ static void ui_set(lv_obj_t *label, const char *text)
 #define BAR_OFF 0xd9d9d6
 
 static i2c_master_dev_handle_t pmu;
-static lv_obj_t *wifi_bars[4];
+static lv_obj_t *wifi_bars[4], *lbl_net;
 static volatile bool wifi_up; // has an IP
 static lv_obj_t *lbl_batt;
 static bool on_battery;
@@ -621,6 +621,14 @@ static void ui_init(void)
         lv_obj_set_clickable(wifi_bars[i], false);
     }
 
+    lbl_net = lv_label_create(status); // the hotspot's name, while away from home
+    lv_obj_set_style_text_font(lbl_net, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_net, lv_color_hex(BAR_ON), 0);
+    lv_obj_set_width(lbl_net, 80);
+    lv_label_set_long_mode(lbl_net, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_clickable(lbl_net, false);
+    lv_obj_set_hidden(lbl_net, true);
+
     lbl_batt = lv_label_create(status);
     lv_obj_set_style_text_font(lbl_batt, &lv_font_montserrat_14, 0);
     lv_obj_set_clickable(lbl_batt, false);
@@ -803,23 +811,131 @@ static void ws_start(void)
     esp_websocket_client_start(ws);
 }
 
-// ── Wi-Fi ────────────────────────────────────────────────────────────────────
+// ── Wi-Fi: home first, the phone's hotspot when away ─────────────────────────
+//
+// Two networks from menuconfig, in order of preference. The board scans and joins
+// the first one it can see; if it sees neither (a hotspot can hide its name), it
+// tries each in turn. On the hotspot it looks for home every minute and moves back
+// once home is in range.
+
+typedef struct {
+    const char *ssid, *password;
+} network_t;
+
+static const network_t networks[] = {
+    {CONFIG_NEKO_WIFI_SSID, CONFIG_NEKO_WIFI_PASSWORD},           // home
+    {CONFIG_NEKO_WIFI_AWAY_SSID, CONFIG_NEKO_WIFI_AWAY_PASSWORD}, // away
+};
+#define N_NETWORKS 2
+#define HOME_MIN_RSSI -75 // move back home only when its signal is at least this good
+
+static int net = -1;       // the network joined, or being joined
+static int next_try;       // when no known network is seen: try each in turn
+static int switch_to = -1; // after this disconnect, join this one
+static volatile bool scanning;
+static esp_timer_handle_t retry_timer, home_check_timer;
+
+static bool configured(int i) { return networks[i].ssid[0] != 0; }
+
+/** The hotspot's name next to the Wi-Fi bars while away from home. */
+static void show_network(void)
+{
+    if (!bsp_display_lock(100)) return;
+    bool away = wifi_up && net > 0;
+    lv_label_set_text(lbl_net, away ? networks[net].ssid : "");
+    lv_obj_set_hidden(lbl_net, !away);
+    bsp_display_unlock();
+}
+
+static void join(int i)
+{
+    net = i;
+    wifi_config_t cfg = {0};
+    strlcpy((char *)cfg.sta.ssid, networks[i].ssid, sizeof cfg.sta.ssid);
+    strlcpy((char *)cfg.sta.password, networks[i].password, sizeof cfg.sta.password);
+    esp_wifi_set_config(WIFI_IF_STA, &cfg);
+    esp_wifi_connect();
+    ESP_LOGI(TAG, "joining %s", networks[i].ssid);
+    char buf[80];
+    snprintf(buf, sizeof buf, "%s に接続中…", networks[i].ssid);
+    ui_set(lbl_top, buf);
+}
+
+static void scan(void *arg)
+{
+    if (scanning) return;
+    wifi_scan_config_t sc = {0}; // every channel
+    if (esp_wifi_scan_start(&sc, false) == ESP_OK) {
+        scanning = true;
+    } else if (!wifi_up && !esp_timer_is_active(retry_timer)) {
+        esp_timer_start_once(retry_timer, 3000000); // busy: try again shortly
+    }
+}
+
+static void home_check(void *arg)
+{
+    if (wifi_up && net > 0) scan(NULL);
+}
+
+static void on_scan_done(void)
+{
+    static wifi_ap_record_t aps[20];
+    uint16_t n = sizeof aps / sizeof aps[0];
+    if (esp_wifi_scan_get_ap_records(&n, aps) != ESP_OK) n = 0;
+    scanning = false;
+
+    int seen = -1; // the most preferred known network in range
+    for (int i = 0; i < N_NETWORKS && seen < 0; i++) {
+        if (!configured(i)) continue;
+        for (int j = 0; j < n; j++) {
+            if (strcmp((const char *)aps[j].ssid, networks[i].ssid) != 0) continue;
+            if (wifi_up && aps[j].rssi < HOME_MIN_RSSI) continue; // too weak to leave the hotspot for
+            seen = i;
+            break;
+        }
+    }
+
+    if (wifi_up) { // on the hotspot: is home back?
+        if (net > 0 && seen == 0) {
+            ESP_LOGI(TAG, "home is in range, moving back");
+            switch_to = 0;
+            esp_wifi_disconnect();
+        }
+        return;
+    }
+    if (seen < 0) { // none in sight: try each in turn
+        do {
+            seen = next_try;
+            next_try = (next_try + 1) % N_NETWORKS;
+        } while (!configured(seen));
+    }
+    join(seen);
+}
 
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        scan(NULL);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
+        on_scan_done();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_up = false;
-        ui_set(lbl_top, "Wi-Fi 再接続中…");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        esp_wifi_connect();
+        show_network();
+        if (switch_to >= 0) {
+            int to = switch_to;
+            switch_to = -1;
+            join(to);
+            return;
+        }
+        ui_set(lbl_top, "Wi-Fi をさがし中…");
+        if (!esp_timer_is_active(retry_timer)) esp_timer_start_once(retry_timer, 2000000);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = data;
         wifi_up = true;
-        ESP_LOGI(TAG, "IP " IPSTR, IP2STR(&e->ip_info.ip));
+        ESP_LOGI(TAG, "on %s, IP " IPSTR, networks[net].ssid, IP2STR(&e->ip_info.ip));
+        show_network();
         ui_set(lbl_top, "ボックスに接続中…");
-        ws_start();
+        ws_start(); // the client reconnects by itself after a network change
     }
 }
 
@@ -832,13 +948,15 @@ static void wifi_start(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, NULL));
 
-    wifi_config_t cfg = {0};
-    strlcpy((char *)cfg.sta.ssid, CONFIG_NEKO_WIFI_SSID, sizeof cfg.sta.ssid);
-    strlcpy((char *)cfg.sta.password, CONFIG_NEKO_WIFI_PASSWORD, sizeof cfg.sta.password);
+    esp_timer_create_args_t retry = {.callback = scan, .name = "wifi_retry"};
+    esp_timer_create_args_t check = {.callback = home_check, .name = "home_check"};
+    ESP_ERROR_CHECK(esp_timer_create(&retry, &retry_timer));
+    ESP_ERROR_CHECK(esp_timer_create(&check, &home_check_timer));
+    esp_timer_start_periodic(home_check_timer, 60 * 1000000LL);
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ui_set(lbl_top, "Wi-Fi 接続中…");
+    ui_set(lbl_top, "Wi-Fi をさがし中…");
 }
 
 void app_main(void)
@@ -869,7 +987,7 @@ void app_main(void)
     ui_init();
     audio_start();
 
-    if (strlen(CONFIG_NEKO_WIFI_SSID) == 0) {
+    if (!configured(0) && !configured(1)) {
         ui_set(lbl_top, "Wi-Fi 未設定 (menuconfig)");
         return;
     }

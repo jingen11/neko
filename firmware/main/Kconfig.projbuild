@@ -1,9 +1,17 @@
 menu "neko"
     config NEKO_WIFI_SSID
-        string "Wi-Fi SSID"
+        string "Home Wi-Fi SSID"
         default ""
     config NEKO_WIFI_PASSWORD
-        string "Wi-Fi password"
+        string "Home Wi-Fi password"
+        default ""
+    config NEKO_WIFI_AWAY_SSID
+        string "Away Wi-Fi SSID (your phone's hotspot)"
+        default ""
+        help
+            Used when home isn't in range. Home is preferred whenever it's back.
+    config NEKO_WIFI_AWAY_PASSWORD
+        string "Away Wi-Fi password"
         default ""
     config NEKO_WS_URL
         string "Box WebSocket URL"

@@ -3,20 +3,6 @@ import path from "node:path";
 
 const trim = (s: string) => s.replace(/\/+$/, "");
 
-/** NEKO_TZ must be an IANA name like "Asia/Kuala_Lumpur"; an invalid one falls back to the box's zone instead of crashing. */
-function timeZone(): string {
-  const system = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const wanted = process.env.NEKO_TZ?.trim();
-  if (!wanted) return system;
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: wanted });
-    return wanted;
-  } catch {
-    console.warn(`NEKO_TZ="${wanted}" is not a valid time zone (expected an IANA name like "Asia/Kuala_Lumpur"); using ${system}`);
-    return system;
-  }
-}
-
 export const config = {
   host: process.env.NEKO_HOST ?? "127.0.0.1",
   port: Number(process.env.NEKO_PORT ?? 8081),
@@ -26,8 +12,6 @@ export const config = {
   voicevoxSpeaker: Number(process.env.VOICEVOX_SPEAKER ?? 3),
   level: (process.env.NEKO_LEVEL ?? "N4").toUpperCase(),
   petName: process.env.NEKO_PET_NAME ?? "ねこ",
-  /** Your time zone: decides the pet's bedtime and what counts as "today" for the streak. */
-  tz: timeZone(),
   dataDir: process.env.NEKO_DATA_DIR ?? path.resolve(import.meta.dirname, "../data"),
   /** Where neko writes learning records for you and Hermes (Obsidian vault folder). Empty string turns it off. */
   vaultDir: process.env.NEKO_VAULT_DIR ?? path.join(os.homedir(), "vault", "Japanese"),
@@ -54,4 +38,6 @@ export const config = {
   /** Zigbee2MQTT friendly names of the home sensors (sensors.ts). */
   doorSensor: process.env.NEKO_DOOR_SENSOR || "front_door",
   windowSensor: process.env.NEKO_WINDOW_SENSOR || "front_window_1",
+  /** ip2location.io API key: where each client is, from its public IP (location.ts). Empty = off. */
+  ip2locationKey: process.env.IP2LOCATION_KEY ?? "",
 };

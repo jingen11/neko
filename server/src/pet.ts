@@ -1,6 +1,7 @@
 import type { Anim, Mood, PetStats } from "../../shared/protocol.ts";
 import { config } from "./config.ts";
 import { db } from "./db.ts";
+import { learnerTimeZone } from "./location.ts";
 
 /**
  * The pet's persistent state. Stats change with time (computed lazily from timestamps):
@@ -43,10 +44,11 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pra
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n));
-const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: config.tz, year: "numeric", month: "2-digit", day: "2-digit" });
-const hourFmt = new Intl.DateTimeFormat("en-GB", { timeZone: config.tz, hour: "2-digit", hourCycle: "h23" });
-export const localDay = (t = Date.now()) => dayFmt.format(t); // YYYY-MM-DD
-const localHour = (t = Date.now()) => Number(hourFmt.format(t));
+// "Today" and the hour are in the learner's time zone, which follows the board (location.ts).
+const dayFmt = (zone: string) => new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" });
+const hourFmt = (zone: string) => new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", hourCycle: "h23" });
+export const localDay = (t = Date.now()) => dayFmt(learnerTimeZone()).format(t); // YYYY-MM-DD
+const localHour = (t = Date.now()) => Number(hourFmt(learnerTimeZone()).format(t));
 
 interface Row {
   hunger: number;

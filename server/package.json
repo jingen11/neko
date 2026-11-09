@@ -14,6 +14,7 @@
   "dependencies": {
     "@fastify/static": "^10.1.8",
     "@fastify/websocket": "^11.3.4",
+    "@photostructure/tz-lookup": "^11.8.0",
     "fastify": "^5.12.7",
     "mqtt": "^5.16.1"
   },

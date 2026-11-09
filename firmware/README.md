@@ -20,7 +20,7 @@ In each new shell: `. ~/esp/esp-idf-v5.5.6/export.sh`
 ```bash
 cd firmware
 idf.py set-target esp32s3      # first time only
-idf.py menuconfig              # neko → Wi-Fi SSID, password, box URL (ws://<box LAN IP>:8081/ws)
+idf.py menuconfig              # neko → home Wi-Fi, away Wi-Fi (phone hotspot), box URL (ws://<box LAN IP>:8081/ws)
 idf.py build
 idf.py -p /dev/cu.usbmodem* flash monitor
 ```
@@ -46,6 +46,7 @@ Wi-Fi settings are saved in `sdkconfig`, which git ignores. If the board doesn't
 - **Check:** each `correction` shows as a card at the top: red with `wrong → right` and the grammar point for 12 s, or a green ◎ for 3 s.
 - **Touch:** a tap pets the cat.
 - **Status rows:** Wi-Fi signal (four bars) and battery (from the AXP2101, which is only read; its power rails are left alone) on the first row, the pet's health on the second. Everything keeps 16 px from the edges for the rounded corners.
+- **Wi-Fi, home and away:** two networks in menuconfig. The board scans and joins home if it's in range, else the away network (your phone's hotspot); when it sees neither (a hotspot can hide its name), it tries each in turn. On the hotspot it checks for home every minute and moves back once home's signal is above −75 dBm. The hotspot's name shows next to the Wi-Fi bars. The box URL is the same on both, so away from home the board can't reach the box yet.
 - **Power:** the CPU drops to 80 MHz when idle. On battery, the screen dims after 30 s without use and the board deep-sleeps after 60 s (Wi-Fi, screen, speaker amp and codecs off); a touch wakes it, and it reconnects. On USB it never sleeps. While it sleeps the Mac can't see it: touch it before flashing.
 
-In `idf.py menuconfig` → neko: speaker volume (default 70), dim after (30 s) and sleep after (60 s).
+In `idf.py menuconfig` → neko: home and away Wi-Fi, box URL, speaker volume (default 70), dim after (30 s) and sleep after (60 s). menuconfig needs a full terminal window; it doesn't open inside Claude Code.

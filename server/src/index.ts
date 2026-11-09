@@ -8,7 +8,7 @@ import { nekoProfile, profileHealth } from "./hermes.ts";
 import { padSilence } from "./audio.ts";
 import * as challenge from "./challenge.ts";
 import { config } from "./config.ts";
-import { attach, sensorAlert } from "./hub.ts";
+import { attach, learnerLocation, sensorAlert } from "./hub.ts";
 import type { ChatMessage } from "./llm.ts";
 import { mqttHealth } from "./mqtt.ts";
 import { startSensors } from "./sensors.ts";
@@ -19,6 +19,7 @@ import { listVoices, speak } from "./tts.ts";
 import { petTurn } from "./tutor.ts";
 import { saveRecording, score, testCases } from "./voicetest.ts";
 import type { ReviewAttempt, ReviewResult } from "../../shared/protocol.ts";
+import { clientIp } from "./location.ts";
 
 const app = Fastify({ logger: { level: process.env.NEKO_LOG_LEVEL ?? "info" }, disableRequestLogging: true, bodyLimit: 20 * 1024 * 1024 });
 
@@ -31,7 +32,10 @@ app.register(fastifyStatic, { root: [webDist, path.resolve(import.meta.dirname, 
 
 // The pet protocol (see shared/protocol.ts).
 await app.register(fastifyWebsocket, { options: { maxPayload: 4 * 1024 * 1024 } });
-app.get("/ws", { websocket: true }, (socket) => attach(socket, app.log));
+app.get("/ws", { websocket: true }, (socket, req) => attach(socket, app.log, clientIp(req.headers, req.socket.remoteAddress)));
+
+/** Where the learner is (from the board's public IP), for the world tools' where_am_i. null = not known yet. */
+app.get("/api/location", async () => learnerLocation() ?? { client: null, location: null });
 
 /** Speech → text. Body: raw 16-bit mono PCM; sample rate in `x-sample-rate` (default 16000). */
 app.post("/api/stt", async (req, reply) => {
