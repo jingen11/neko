@@ -14,4 +14,10 @@ menu "neko"
         int "Speaker volume (0-100)"
         range 0 100
         default 70
+    config NEKO_SCREEN_DIM_S
+        int "On battery: dim the screen after (seconds without use)"
+        default 30
+    config NEKO_SLEEP_S
+        int "On battery: deep sleep after (seconds without use; a touch wakes it)"
+        default 60
 endmenu
