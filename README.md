@@ -10,7 +10,9 @@ Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Phase 2 — the pet: done.** PixiJS cat at `/` (sample screen at `/?demo`, animation switch at `/?debug`), WebSocket protocol (`shared/protocol.ts`) that the ESP32 board will also use, pet stats (hunger, happiness, streak) in SQLite.
 - **Phase 3 — learning records + questions: built, being checked on the box.** Every sentence, correction, translation, listening miss, question and review attempt is appended to the day's note in `~/vault/Japanese/` (see [Learning records](#learning-records)); the **Notes** page shows them, and Hermes writes a weekly review. **Ask grammar** in the composer (or **Ask about this** on a review card) sends a grammar question to Hermes on Claude. **Ask Hermes** sends anything else (chat, "what have I learnt this week?") to Hermes on its local model. Hermes reads those notes either way; if it's down, the pet's own model answers.
 
-Later phases: ESP32-S3 firmware, away-from-home access.
+- **Phase 4 — the board: in progress.** Firmware in [`firmware/`](firmware/README.md) for the Waveshare ESP32-S3-Touch-LCD-1.83: the same pixel-art cat as the web app, Japanese and English lines (DotGothic16), ねこ's voice on the speaker with lip-sync, push-to-talk (hold the screen), the grammar check as a card, tap to pet. Still to do: IMU reactions, battery, Wi-Fi setup without rebuilding.
+
+Later phases: away-from-home access, GPS add-on.
 
 ## Services
 
@@ -64,7 +66,7 @@ Each conversation turn makes two calls at once. The **grammar check** stays on l
 ねこ is a pet and tutor with a brain but no memory: it gets only the recent conversation that neko sends. Only the neko server writes your record. The `neko` profile is set up for that, in `~/.hermes/profiles/neko/`:
 
 - cloned from `default`, on the local model; `SOUL.md` replaced with a short note (follow the app's instructions and format, use tools for real-world facts)
-- MCP servers: `time` (`mcp-server-time`, `--local-timezone Asia/Kuala_Lumpur`) and `weather` (`weather-open-meteo-mcp`, Open-Meteo, no key), installed under `~/.local/share/mcp/`
+- MCP servers: `neko_time` (`mcp-server-time`, `--local-timezone Asia/Kuala_Lumpur`) and `weather` (`weather-open-meteo-mcp`, Open-Meteo, no key), installed under `~/.local/share/mcp/`. The time server is named `neko_time`, not `time`: one gateway shares MCP servers by name across profiles, so a `time` server in the global `~/.hermes/config.yaml` would take its place (and its failures).
 - no file, skill, memory or session tools (`agent.disabled_toolsets`), all skills off, `auxiliary.background_review.enabled: false`, `memory.memory_enabled` / `user_profile_enabled: false`, `max_turns: 20`
 
 Hermes can't enforce a JSON schema, so the reply's shape (ja, en, mood) is in the prompt and checked in code: a reply in plain Japanese is spoken as is (no English that turn), anything else is retried once. If Hermes fails, the check still shows, ねこ looks sick and the page says why. A turn takes about 5–25 s; tool calls add time. Known limit: the local model sometimes misreads 24-hour times (01:22 as 午後1時).
