@@ -84,7 +84,7 @@ The board has no GNSS receiver, so location comes from a small external module w
 
 ### Travelling: the time zone follows the learner (planned)
 
-Today every clock is fixed to the box at home (KL): the box's system zone, `timezone: Asia/Kuala_Lumpur` in each Hermes profile's `config.yaml` (under the multiplexed gateway Hermes ignores `HERMES_TIMEZONE` in `.env`), the time MCP server's `--local-timezone`, and `NEKO_TZ`. neko's requests to Hermes carry no time or place. So away from home, Hermes and ねこ still think it is KL time.
+neko's own clock (the pet's bedtime, "today" for the streak, note times) now follows the board (step 2). Hermes's clocks are still fixed to the box at home (KL): `timezone: Asia/Kuala_Lumpur` in each Hermes profile's `config.yaml` (under the multiplexed gateway Hermes ignores `HERMES_TIMEZONE` in `.env`) and the time MCP server's `--local-timezone`. ねこ can look up where the learner is (`where_am_i`, which gives the zone), but its time tool defaults to KL when it isn't given one.
 
 The box keeps its own zone; the **learner's current zone** travels with the board:
 
