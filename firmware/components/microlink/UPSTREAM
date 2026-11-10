@@ -1,0 +1,3 @@
+Csontikka/microlink a85e8c42ee2ed3223f8c3bd3766fc37af1985384 (Tue Oct 20 07:33:31 2026 +0200)
+Local change (neko): microlink.c creates ml_net_io, ml_derp_tx, ml_derp_rx and ml_coord with their stacks in PSRAM (xTaskCreatePinnedToCoreWithCaps).
+Local change (neko): ml_coord.c skips the netcheck when netcheck_override_enabled is false (its result is unused then).
