@@ -183,11 +183,7 @@ npm start                # http://127.0.0.1:8081  (pet at /, lab page at /lab.ht
 
 After changing web code, run `npm run build` in `web/` again. For live reload while developing the pet, run `npm run dev` in `web/` (Vite on :5173, forwarding `/api` and `/ws` to the neko server).
 
-The microphone only works on a secure origin, so open the page as `http://localhost:8081`. If the box is remote, tunnel it first:
-
-```bash
-ssh -L 8081:localhost:8081 <box>
-```
+The microphone only works on a secure origin. From any device on the tailnet, open **https://neko.home.je-dev.com**: Caddy on the box serves it with a Let's Encrypt wildcard certificate for `*.home.je-dev.com` (DNS-01 through Route 53) and proxies to :8081. On the box itself, `http://localhost:8081` works too.
 
 ### Config (`server/.env`)
 

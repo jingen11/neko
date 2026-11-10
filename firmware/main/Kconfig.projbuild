@@ -28,9 +28,10 @@ menu "neko"
             Used when a direct connection can't be made. Region numbers: 1 nyc, 3 sin, 4 fra, 7 tok, 8 lhr, 20 hkg.
     config NEKO_WS_URL
         string "Box WebSocket URL"
-        default "ws://192.168.1.10:8081/ws"
+        default "ws://neko.home.je-dev.com:8081/ws"
         help
-            The neko server's /ws endpoint on the box's LAN address.
+            The neko server's /ws endpoint. neko.home.je-dev.com resolves (public DNS) to the
+            box's tailnet IP, so it needs Tailscale on; with Tailscale off, use the box's LAN address.
     config NEKO_VOLUME
         int "Speaker volume (0-100)"
         range 0 100
