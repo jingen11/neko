@@ -2,9 +2,8 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { ChallengeResult } from "../../shared/protocol.ts";
 import { config } from "./config.ts";
-import { localDay } from "./pet.ts";
+import { boxDay } from "./pet.ts";
 import type { Correction, Mistake } from "./tutor.ts";
-import { learnerTimeZone } from "./location.ts";
 
 /**
  * Learning records go to the Obsidian vault only. neko appends each event to the day's note once and
@@ -18,15 +17,15 @@ import { learnerTimeZone } from "./location.ts";
 
 const DAILY = "Daily";
 
-// Note times in the learner's time zone, like the note's date (localDay).
-const clock = (t: number) =>
-  new Intl.DateTimeFormat("en-GB", { timeZone: learnerTimeZone(), hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(t);
+// Note times on the box's zone, like the note's date (boxDay): one timeline, wherever the learner is.
+const clockFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+const clock = (t: number) => clockFmt.format(t);
 const oneLine = (s: string) => s.replace(/\s*\n\s*/g, " ").trim();
 
 /** Append one entry to the day's note, starting the note if it's the first entry today. */
 function append(at: number, title: string, lines: string[], body = "") {
   if (!config.vaultDir) return;
-  const day = localDay(at);
+  const day = boxDay(at);
   const file = path.join(config.vaultDir, DAILY, `${day}.md`);
   mkdirSync(path.dirname(file), { recursive: true });
   const head = existsSync(file) ? "" : `---\ndate: ${day}\nlevel: ${config.level}\ntags: [neko, japanese/daily]\n---\n# Japanese practice ${day}\n\n`;
