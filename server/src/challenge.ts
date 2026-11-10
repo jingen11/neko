@@ -4,7 +4,7 @@ import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { chatJson } from "./llm.ts";
 import * as pet from "./pet.ts";
-import { localDay } from "./pet.ts";
+import { boxDay } from "./pet.ts";
 import * as records from "./records.ts";
 
 /**
@@ -216,7 +216,7 @@ const toChallenge = ({ id, kind, day, zh, topic, grammar }: Row): Challenge => (
 const inFlight = new Map<string, Promise<Challenge>>();
 
 /** Today's daily challenge: made once (seeded by the date), then read back from the database. */
-export function ensureDaily(day = localDay()): Promise<Challenge> {
+export function ensureDaily(day = boxDay()): Promise<Challenge> {
   const row = db.prepare("SELECT * FROM challenges WHERE day = ? AND kind = 'daily'").get(day) as Row | undefined;
   if (row) return Promise.resolve(toChallenge(row));
   let p = inFlight.get(day);
@@ -229,7 +229,7 @@ export function ensureDaily(day = localDay()): Promise<Challenge> {
 
 /** The card's challenge: the latest one made today (an on-demand one replaces the daily on the card). */
 export async function current(): Promise<ChallengeState> {
-  const day = localDay();
+  const day = boxDay();
   await ensureDaily(day);
   const row = db.prepare("SELECT * FROM challenges WHERE day = ? ORDER BY at DESC, id DESC LIMIT 1").get(day) as unknown as Row;
   return { challenge: toChallenge(row) };
@@ -237,7 +237,7 @@ export async function current(): Promise<ChallengeState> {
 
 /** A fresh on-demand challenge with a random seed. */
 export async function fresh(): Promise<ChallengeState> {
-  const c = await create("extra", localDay(), randomInt(2 ** 31));
+  const c = await create("extra", boxDay(), randomInt(2 ** 31));
   return { challenge: c };
 }
 

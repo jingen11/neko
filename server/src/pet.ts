@@ -44,11 +44,15 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pra
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n));
-// "Today" and the hour are in the learner's time zone, which follows the board (location.ts).
-const dayFmt = (zone: string) => new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" });
+// Two clocks (docs/ARCHITECTURE.md, "Travelling"):
+// - "today" (the streak, practice per day, the daily challenge, the vault notes) is on the box's own zone,
+//   so travelling can't repeat or skip a day;
+// - the hour for what ねこ does (bedtime, drowsy hour, greetings) is the learner's, which follows the board.
+const boxZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const boxDayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: boxZone, year: "numeric", month: "2-digit", day: "2-digit" });
 const hourFmt = (zone: string) => new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", hourCycle: "h23" });
-export const localDay = (t = Date.now()) => dayFmt(learnerTimeZone()).format(t); // YYYY-MM-DD
-const localHour = (t = Date.now()) => Number(hourFmt(learnerTimeZone()).format(t));
+export const boxDay = (t = Date.now()) => boxDayFmt.format(t); // YYYY-MM-DD
+const learnerHour = (t = Date.now()) => Number(hourFmt(learnerTimeZone()).format(t));
 
 interface Row {
   hunger: number;
@@ -80,13 +84,13 @@ function streak(): number {
   const oneDay = 86_400_000;
   // The streak is alive if you practised today or yesterday.
   let cursor = Date.now();
-  if (days[0] !== localDay(cursor)) {
+  if (days[0] !== boxDay(cursor)) {
     cursor -= oneDay;
-    if (days[0] !== localDay(cursor)) return 0;
+    if (days[0] !== boxDay(cursor)) return 0;
   }
   let n = 0;
   for (const d of days) {
-    if (d !== localDay(cursor)) break;
+    if (d !== boxDay(cursor)) break;
     n++;
     cursor -= oneDay;
   }
@@ -95,7 +99,7 @@ function streak(): number {
 
 export function stats(): PetStats {
   const r = load();
-  const today = db.prepare("SELECT n FROM practice_days WHERE day = ?").get(localDay()) as { n: number } | undefined;
+  const today = db.prepare("SELECT n FROM practice_days WHERE day = ?").get(boxDay()) as { n: number } | undefined;
   return {
     name: config.petName,
     hunger: Math.round(r.hunger),
@@ -107,7 +111,7 @@ export function stats(): PetStats {
 }
 
 export const isBedtime = (t = Date.now()) => {
-  const h = localHour(t);
+  const h = learnerHour(t);
   return h >= BEDTIME.from || h < BEDTIME.to;
 };
 
@@ -121,7 +125,7 @@ export function restingMood(s = stats()): Mood {
 
 /** Drowsy hour on each side of bedtime. */
 export const isDrowsy = (t = Date.now()) => {
-  const h = localHour(t);
+  const h = learnerHour(t);
   return h === (BEDTIME.from + 23) % 24 || h === BEDTIME.to;
 };
 
@@ -139,7 +143,7 @@ export function recordPractice(correct: boolean) {
   r.hunger = clamp(r.hunger - FEED_PER_TURN);
   r.happiness = clamp(r.happiness + JOY_PER_TURN + (correct ? JOY_CORRECT_BONUS : 0));
   save(r);
-  db.prepare("INSERT INTO practice_days (day, n) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1").run(localDay());
+  db.prepare("INSERT INTO practice_days (day, n) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1").run(boxDay());
 }
 
 let lastPetAt = 0;
@@ -155,7 +159,7 @@ export function petted(): boolean {
 }
 
 /** Fixed greetings (no LLM call, so they're instant). */
-export function greeting(mood: Mood, s: PetStats): string {
+export function greeting(mood: Mood, s: PetStats, t = Date.now()): string {
   switch (mood) {
     case "sleepy":
       return "ふわぁ…ねむいよ。あしたまた話そうね。";
@@ -163,8 +167,13 @@ export function greeting(mood: Mood, s: PetStats): string {
       return "おなかがすいたよ…。日本語で話して、ごはんをちょうだい！";
     case "sad":
       return "さびしかったよ…。いっしょに話そう？";
-    default:
-      return s.practicedToday > 0 ? "おかえり！また話そう！" : "こんにちは！今日も日本語で話そう！";
+    default: {
+      if (s.practicedToday > 0) return "おかえり！また話そう！";
+      // by the learner's hour: bedtime (23:00–07:00) is the sleepy greeting above
+      const h = learnerHour(t);
+      const hello = h >= 5 && h < 10 ? "おはよう" : h >= 10 && h < 17 ? "こんにちは" : "こんばんは";
+      return `${hello}！今日も日本語で話そう！`;
+    }
   }
 }
 
@@ -173,5 +182,7 @@ export const greetingEn: Record<string, string> = {
   "おなかがすいたよ…。日本語で話して、ごはんをちょうだい！": "I'm hungry… Talk to me in Japanese and feed me!",
   "さびしかったよ…。いっしょに話そう？": "I was lonely… Shall we talk?",
   "おかえり！また話そう！": "Welcome back! Let's talk again!",
+  "おはよう！今日も日本語で話そう！": "Good morning! Let's speak Japanese today too!",
+  "こんばんは！今日も日本語で話そう！": "Good evening! Let's speak Japanese today too!",
   "こんにちは！今日も日本語で話そう！": "Hello! Let's speak Japanese today too!",
 };
