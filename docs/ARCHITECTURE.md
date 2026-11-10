@@ -82,18 +82,18 @@ The board has no GNSS receiver, so location comes from a small external module w
 - **Privacy:** location goes only to the box, over the authenticated WebSocket (see the away-from-home issue). The box keeps the **latest fix in memory only** — no location history, and nothing written to the vault — unless that is decided later.
 - **Uses:** weather for where you are (the Hermes `neko` profile), time zone when travelling, and place-aware practice later (ねこ notices you're at a station or a café and suggests phrases).
 
-### Travelling: the time zone follows the learner (planned)
+### Travelling: the time zone follows the learner
 
-neko's own clock (the pet's bedtime, "today" for the streak, note times) now follows the board (step 2). Hermes's clock is still fixed to the box at home (KL): `timezone: Asia/Kuala_Lumpur` in each Hermes profile's `config.yaml` (under the multiplexed gateway Hermes ignores `HERMES_TIMEZONE` in `.env`), and Hermes puts that date and zone in ねこ's system prompt. The model trusted it, so ねこ's time and weather tools (`world/`) default to where the learner is instead of taking a zone.
+**Decided: which clock follows the learner.** Only what ねこ says and does follows the learner's local zone: its **time answers** (`get_time`), its **bedtime** (23:00–07:00, with the drowsy hour) and its **greetings**. The **streak** ("today", practice per day) and the **dates and times in the vault notes** stay on the **box's zone** (KL), so travelling never repeats or skips a streak day and the notes stay in one timeline. *(Code today: bedtime and drowsy already follow the learner; the streak day and note times still follow the learner too (PR #29) and are to move back to the box's zone; time-of-day greetings don't exist yet.)* Hermes's own clock stays fixed to the box (KL): `timezone: Asia/Kuala_Lumpur` in each Hermes profile's `config.yaml` (under the multiplexed gateway Hermes ignores `HERMES_TIMEZONE` in `.env`), and Hermes puts that date and zone in ねこ's system prompt; the model trusted it, so ねこ's time and weather tools (`world/`) default to where the learner is instead of taking a zone.
 
 The box keeps its own zone; the **learner's current zone** travels with the board:
 
 1. **Board reports where you are.** From the GPS add-on, or, for the zone alone, something coarser: Wi-Fi positioning or the phone hotspot's IP location (the right country or region is enough). The browser app can also send its own zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`).
 2. **The box works out the zone.** *(Done for the IP route: `server/src/location.ts` locates the board's public IP with ip2location.io and names the zone from its coordinates offline with `@photostructure/tz-lookup`, e.g. `Asia/Tokyo`, cached 6 h per address in memory. The board's zone wins over a browser's; before anything is located, the box's own zone. `NEKO_TZ` is gone: the pet's bedtime, "today" for the streak and note times all use it.)*
 3. **ねこ's tools know it.** *(Done, differently from first planned: nothing goes into the prompt.)* `get_time()` and `get_weather()` in `world/` default to the learner's location from `GET /api/location`, so the model never needs a zone. Hermes's own `timezone` stays KL, for cron and the box.
-4. **ねこ follows it too:** bedtime (23:00–07:00) and greetings use the learner's current zone.
+4. **ねこ follows it too:** bedtime (23:00–07:00) and greetings use the learner's current zone *(bedtime done; greetings by time of day, e.g. おはよう / こんばんは, still to build)*. The streak stays on the box's zone (decided above).
 
-**Open decision — the streak while travelling.** Changing zones can repeat or skip a calendar day. Proposed rule: count days in the learner's current zone, but a zone change never breaks the streak (a day lost to a jump counts as kept; a repeated day counts once).
+**Decided — the streak while travelling:** it counts days in the box's zone (KL), not the learner's, so a zone change can't repeat or skip a day.
 
 ### Board ↔ box protocol (one WebSocket)
 
@@ -116,7 +116,7 @@ The board joins the tailnet itself and reaches the box at its tailnet address (`
 - **On the board:** [microlink](https://github.com/Csontikka/microlink) (Csontikka's fork, the one under `esphome-tailscale`), vendored in `firmware/components/`. It gives lwIP a WireGuard interface, so the ordinary WebSocket client reaches 100.x addresses. Two local changes, listed in `components/microlink/UPSTREAM`: four of its task stacks live in PSRAM (with them in internal RAM, ねこ's voice arriving over WireGuard used up the internal RAM and the screen task hung), and the relay netcheck is skipped (it blocked every join for 25 s). The home relay is fixed (Singapore); it's only used when a direct path can't be made. Joining takes ~7.5 s after Wi-Fi.
 - **Location:** over Tailscale the box sees the board's 100.x address, so the board reports the public IP its STUN probe saw (`net` message) and the box locates it by that; the box's own public IP means home.
 - **Wi-Fi away:** the board's second network is the phone's hotspot (home first, see `firmware/README.md`).
-- **To check:** waking from deep sleep and switching between home and the hotspot (the tailnet has to follow), and latency over mobile data (audio may want Opus instead of raw PCM).
+- **Tested:** switching between home Wi-Fi and the phone's hotspot works; the board reaches the box from either. **Still to check:** waking from deep sleep on the hotspot, and latency over mobile data (audio may want Opus instead of raw PCM).
 
 ## Build order (riskiest first)
 
@@ -124,7 +124,7 @@ The board joins the tailnet itself and reaches the box at its tailnet address (`
 2. **Pet engine + PixiJS pet + WebSocket protocol**, browser as the first client. *(Done: protocol in `shared/protocol.ts`; pet drawn from pixel-art GIFs (`web/public/pet/<anim>.gif`, anchored at the feet automatically; drowsy hour around bedtime with yawns, sick when starving, grumpy if petted awake at night); stats in SQLite — practising feeds the pet, petting cheers it up, it sleeps 23:00–07:00 in the learner's time zone.)*
 3. **Vault learning records + Hermes grammar Q&A.** *(Built, being checked on the box: every turn, translation, listening miss, question and review attempt is appended to `~/vault/Japanese/Daily/<date>.md`; listening misses = repeat / slow / opened the English; questions only through the Hermes API server (Hermes reads the notes itself): grammar to the `pro` profile, casual to `default`, no fallback; Review panel and Notes page; weekly review by Hermes cron. Protocol: `ask_grammar` / `ask_casual` → `answer`, `reveal`.)*
 4. **ESP32-S3 firmware** — WebSocket client, audio via ES8311/ES7210, sprite rendering, touch and IMU. *(In progress, `firmware/`: ESP-IDF 5.5 + Waveshare BSP + LVGL 9; the web app's GIFs embedded and played at 3x anchored at the feet; Japanese through TinyTTF + DotGothic16; voice buffered in PSRAM and played at 16 kHz with lip-sync; push-to-talk by holding the screen, the transcript confirmed straight away; correction shown as a card. Not yet: IMU, battery, Wi-Fi provisioning.)*
-5. **Away-from-home access** — Tailscale on the board (above). *(Working at home over the tailnet; being tested on the hotspot.)*
+5. **Away-from-home access** — Tailscale on the board (above). *(Done: works on home Wi-Fi and the phone's hotspot, switching between them.)*
 6. **GPS add-on** — pick the module and confirm the UART pads from the schematic, wire it, parse NMEA in firmware, send `location` to the box. Needs 4 (firmware) and is only useful after 5 (away from home).
 7. **Time zone follows the learner** — coordinates → zone on the box, the learner's zone in every Hermes request, ねこ's bedtime and greetings in that zone, and the streak rule above. Works with GPS or a coarser location source; the browser can send its zone before the board exists.
 
