@@ -20,7 +20,7 @@ In each new shell: `. ~/esp/esp-idf-v5.5.6/export.sh`
 ```bash
 cd firmware
 idf.py set-target esp32s3      # first time only
-idf.py menuconfig              # neko → home Wi-Fi, away Wi-Fi (phone hotspot), box URL (ws://<box LAN IP>:8081/ws)
+idf.py menuconfig              # neko → home Wi-Fi, away Wi-Fi (phone hotspot), box URL (default ws://neko.home.je-dev.com:8081/ws)
 idf.py build
 idf.py -p /dev/cu.usbmodem* flash monitor
 ```
@@ -32,7 +32,7 @@ Wi-Fi settings are saved in `sdkconfig`, which git ignores. If the board doesn't
 The board joins your tailnet with [microlink](https://github.com/Csontikka/microlink) (vendored in `components/`, local changes in `components/microlink/UPSTREAM`) and reaches the box at its tailnet address, at home and away.
 
 1. In the Tailscale admin, **Settings → Keys → Generate auth key**: reusable, pre-approved, not ephemeral (90 days at most; it only matters for joining).
-2. `idf.py menuconfig` → neko: **Tailscale auth key**, **the box's tailnet IP** (`tailscale ip -4` on the box), and set **Box WebSocket URL** to `ws://<that IP>:8081/ws`. Empty key = Tailscale off and the board uses the URL as is.
+2. `idf.py menuconfig` → neko: **Tailscale auth key**, **the box's tailnet IP** (`tailscale ip -4` on the box), and leave **Box WebSocket URL** at `ws://neko.home.je-dev.com:8081/ws`. That name resolves through public DNS to the box's tailnet IP, so it only works with Tailscale on: with an empty key (Tailscale off), set the URL to `ws://<box LAN IP>:8081/ws`.
 3. Flash. It shows as `neko-board`; in **Machines**, **Disable key expiry** for it (and for the box).
 
 Joining takes ~7.5 s after Wi-Fi; the WebSocket starts once it's up. The home relay region (**Tailscale home relay region**, default 3 = Singapore) is only used when a direct path can't be made. The board reports its public IP to the box (`net` message) for the IP location.
