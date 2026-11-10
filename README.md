@@ -67,23 +67,28 @@ Each conversation turn makes two calls at once. The **grammar check** stays on l
 ねこ is a pet and tutor with a brain but no memory: it gets only the recent conversation that neko sends. Only the neko server writes your record. The `neko` profile is set up for that, in `~/.hermes/profiles/neko/`:
 
 - cloned from `default`, on the local model; `SOUL.md` replaced with a short note (follow the app's instructions and format, use tools for real-world facts)
-- MCP servers: `neko_time` (`mcp-server-time`, `--local-timezone Asia/Kuala_Lumpur`, installed under `~/.local/share/mcp/`) and `neko_world` (this repo's `world/`, see [World tools](#world-tools-mcp-server)). The time server is named `neko_time`, not `time`: one gateway shares MCP servers by name across profiles, so a `time` server in the global `~/.hermes/config.yaml` would take its place (and its failures).
+- MCP server: `neko_world` only (this repo's `world/`, see [World tools](#world-tools-mcp-server)): time, weather, where the learner is. Not `mcp-server-time`: with it, the model took the zone from the system prompt (the server's, not the learner's) and misread 24-hour times. Keep MCP server names unique (`neko_world`, not `world`): one gateway shares MCP servers by name across profiles, so a same-named server in another profile takes its place (and its failures).
 - no file, skill, memory or session tools (`agent.disabled_toolsets`), all skills off, `auxiliary.background_review.enabled: false`, `memory.memory_enabled` / `user_profile_enabled: false`, `max_turns: 20`
 
-Hermes can't enforce a JSON schema, so the reply's shape (ja, en, mood) is in the prompt and checked in code: a reply in plain Japanese is spoken as is (no English that turn), anything else is retried once. If Hermes fails, the check still shows, ねこ looks sick and the page says why. A turn takes about 5–25 s; tool calls add time. Known limit: the local model sometimes misreads 24-hour times (01:22 as 午後1時).
+Hermes can't enforce a JSON schema, so the reply's shape (ja, en, mood) is in the prompt and checked in code: a reply in plain Japanese is spoken as is (no English that turn), anything else is retried once. If Hermes fails, the check still shows, ねこ looks sick and the page says why. A turn takes about 5–25 s; tool calls add time.
 
 ### World tools (MCP server)
 
 `world/` is a small MCP server (stdio) with ねこ's tools for the world right now. ねこ decides when to use them; nothing about the learner's location goes into its prompt.
 
+- `get_time`: the time and date now, written out in Japanese (午前7時23分) for the model to say as given. Without `place`, the learner's own local time; with `place`, that place's (its zone from its coordinates, offline with `@photostructure/tz-lookup`). If the learner hasn't been located, home time.
+- `get_weather`: now and a daily forecast (1–7 days, today/tomorrow in the place's own time) from Open-Meteo (no key). Without `place`, where the learner is; else a `place` name or `latitude`/`longitude`.
 - `where_am_i`: where the learner is (city, region, country, coordinates, IANA time zone, home or away). It reads `GET /api/location` on the neko server, which locates the connected board from its public IP with ip2location.io (`server/src/location.ts`, needs `IP2LOCATION_KEY`).
-- `get_weather`: now and a daily forecast (1–7 days, today/tomorrow in the place's own time) for a `place` name or `latitude`/`longitude`, from Open-Meteo (no key). A name can carry its region and country to pick between same-named places ("Paris, Texas, US"). Names must be in Latin script ("Tokyo", not "東京"): Open-Meteo's place search finds nothing in Japanese script.
+
+Time and weather default to where the learner is because Hermes puts the profile's date and time zone in the system prompt, and the model trusted it over `where_am_i` (with the profile set to New York, "what time is it?" came back in New York time). The time is written out in Japanese because the local model turned 24-hour times into the wrong half of the day (07:23 became 午後7時). A name can carry its region and country to pick between same-named places ("Paris, Texas, US"). Names must be in Latin script ("Tokyo", not "東京"): Open-Meteo's place search finds nothing in Japanese script.
 
 The coordinates come from ip2location.io's answer; the neko server names the IANA time zone from them offline (`@photostructure/tz-lookup`). A name goes through Open-Meteo's place search first, because its forecast takes coordinates.
 
-"The weather here?" is `where_am_i` then `get_weather` with its coordinates; "the weather in London?" is `get_weather("London")`.
+"What time is it?" is `get_time()`; "the time in Tokyo?" is `get_time("Tokyo")`; "the weather here?" is `get_weather()`; "the weather in London?" is `get_weather("London")`.
 
-Setup on the box: `cd world && npm install`, then in `~/.hermes/profiles/neko/config.yaml` replace the `weather` server with:
+Open-Meteo's servers are in Europe and can take more than Node's 250 ms per address to connect from home (and IPv6 doesn't route), so the server allows 2 s per attempt.
+
+Setup on the box: `cd world && npm install`, then in `~/.hermes/profiles/neko/config.yaml` make `neko_world` the only MCP server (remove `weather` and `neko_time`):
 
 ```yaml
   neko_world:
