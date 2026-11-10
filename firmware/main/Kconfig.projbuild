@@ -13,6 +13,19 @@ menu "neko"
     config NEKO_WIFI_AWAY_PASSWORD
         string "Away Wi-Fi password"
         default ""
+    config NEKO_TAILSCALE_AUTH_KEY
+        string "Tailscale auth key (empty = Tailscale off)"
+        default ""
+        help
+            A reusable, pre-approved key from the Tailscale admin (tskey-auth-...).
+    config NEKO_TAILSCALE_BOX
+        string "The box's tailnet IP (kept connected first)"
+        default ""
+    config NEKO_TAILSCALE_DERP_REGION
+        int "Tailscale home relay region (3 = Singapore)"
+        default 3
+        help
+            Used when a direct connection can't be made. Region numbers: 1 nyc, 3 sin, 4 fra, 7 tok, 8 lhr, 20 hkg.
     config NEKO_WS_URL
         string "Box WebSocket URL"
         default "ws://192.168.1.10:8081/ws"
