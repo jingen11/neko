@@ -71,7 +71,9 @@ The pet's voice is what you learn pronunciation from, so correct kanji readings 
 - QMI8658 IMU (shake / pick-up reactions), PCF85063 RTC, AXP2101 battery management, TF slot.
 - **No GPS on the board.** Location comes from an add-on module (below).
 
-### Add-on: GPS module (planned)
+### Add-on: GPS module (planned, replaces the IP location)
+
+**Decided (backlog, waiting on the module):** the IP-based location (ip2location.io, `server/src/location.ts`) is dropped. It gives the network's exit point, not where the learner is: Starlink at home shares addresses (CGNAT), and so do mobile carriers away, so the city can be far off. Location comes from the board's GPS instead.
 
 The board has no GNSS receiver, so location comes from a small external module wired to the board's spare pads (Waveshare lists 1× UART, 1× I2C, 1× USB pad; the exact pins are only in the pinout image and schematic — check them before buying or soldering).
 
@@ -79,7 +81,7 @@ The board has no GNSS receiver, so location comes from a small external module w
 - **Wiring:** module TX → board UART RX, module RX → board UART TX, 3.3 V, GND. Firmware parses NMEA (`$GxGGA` / `$GxRMC`) for latitude, longitude, fix quality and satellites.
 - **Power:** GPS draws more than anything but the screen and audio. Power it from a switchable rail or an enable pin so firmware can turn it off at home (home Wi-Fi seen = no GPS needed) and between fixes. Expect a slow first fix (30 s+ from cold) and weak or no fix indoors.
 - **Fallback:** when there is no fix (indoors, underground), the board sends nothing; the box keeps the last known location with its age.
-- **Privacy:** location goes only to the box, over the authenticated WebSocket (see the away-from-home issue). The box keeps the **latest fix in memory only** — no location history, and nothing written to the vault — unless that is decided later.
+- **Privacy:** location goes only to the box, over the tailnet. The box keeps the **latest fix in memory only** — no location history, and nothing written to the vault — unless that is decided later.
 - **Uses:** weather for where you are (the Hermes `neko` profile), time zone when travelling, and place-aware practice later (ねこ notices you're at a station or a café and suggests phrases).
 
 ### Travelling: the time zone follows the learner
@@ -124,8 +126,8 @@ The board joins the tailnet itself and reaches the box at its tailnet address (`
 2. **Pet engine + PixiJS pet + WebSocket protocol**, browser as the first client. *(Done: protocol in `shared/protocol.ts`; pet drawn from pixel-art GIFs (`web/public/pet/<anim>.gif`, anchored at the feet automatically; drowsy hour around bedtime with yawns, sick when starving, grumpy if petted awake at night); stats in SQLite — practising feeds the pet, petting cheers it up, it sleeps 23:00–07:00 in the learner's time zone.)*
 3. **Vault learning records + Hermes grammar Q&A.** *(Built, being checked on the box: every turn, translation, listening miss, question and review attempt is appended to `~/vault/Japanese/Daily/<date>.md`; listening misses = repeat / slow / opened the English; questions only through the Hermes API server (Hermes reads the notes itself): grammar to the `pro` profile, casual to `default`, no fallback; Review panel and Notes page; weekly review by Hermes cron. Protocol: `ask_grammar` / `ask_casual` → `answer`, `reveal`.)*
 4. **ESP32-S3 firmware** — WebSocket client, audio via ES8311/ES7210, sprite rendering, touch and IMU. *(In progress, `firmware/`: ESP-IDF 5.5 + Waveshare BSP + LVGL 9; the web app's GIFs embedded and played at 3x anchored at the feet; Japanese through TinyTTF + DotGothic16; voice buffered in PSRAM and played at 16 kHz with lip-sync; push-to-talk by holding the screen, the transcript confirmed straight away; correction shown as a card. Not yet: IMU, battery, Wi-Fi provisioning.)*
-5. **Away-from-home access** — Tailscale on the board (above). *(Done: works on home Wi-Fi and the phone's hotspot, switching between them.)*
-6. **GPS add-on** — pick the module and confirm the UART pads from the schematic, wire it, parse NMEA in firmware, send `location` to the box. Needs 4 (firmware) and is only useful after 5 (away from home).
+5. **Away-from-home access** — Tailscale on the board (above). *(Working at home over the tailnet; being tested on the hotspot.)*
+6. **GPS add-on** — replaces the IP location (see the add-on section): first the box (drop ip2location, home by Wi-Fi, `location` message, Nominatim names), then pick the module and confirm the UART pads from the schematic, wire it, parse NMEA in firmware, send `location`. *(Backlog: waiting on the module.)*
 7. **Time zone follows the learner** — coordinates → zone on the box, the learner's zone in every Hermes request, ねこ's bedtime and greetings in that zone, and the streak rule above. Works with GPS or a coarser location source; the browser can send its zone before the board exists.
 
 ## Constraints
