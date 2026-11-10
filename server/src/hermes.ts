@@ -82,6 +82,8 @@ export async function hermesJson<T>(
       problem = (err as Error).message;
       const plain = fromText?.(text);
       if (plain !== undefined) return { data: plain, ms: ms() };
+      // A retry starts a fresh Hermes session, which can lose what the first try looked up: keep what was rejected.
+      console.warn(`Hermes ${p.name} reply ${attempt + 1} rejected (${problem}): ${JSON.stringify(text.slice(0, 600))}`);
     }
   }
   throw new Error(`Hermes gave no usable reply twice: ${problem}`);
