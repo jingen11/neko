@@ -9,7 +9,7 @@ import { findPlace, weatherReport, type Place } from "./weather.ts";
  * MCP server (stdio) with ねこ's tools for the world right now, for the Hermes neko profile.
  * Read-only.
  *
- *   get_time     the time now: the learner's own by default, or any place's (written as 午前7時23分)
+ *   get_time     the time now: the learner's own by default, or any place's (ISO 8601, 24-hour, with the zone)
  *   get_weather  weather now and ahead: the learner's location by default, or any place (Open-Meteo, no key)
  *   where_am_i   where the learner is, from the neko server (the board's public IP, ip2location.io)
  *
@@ -53,7 +53,7 @@ const server = new McpServer({ name: "neko-world", version: "0.2.0" });
 
 server.registerTool("get_time", {
   description:
-    "The time and date now, written out in Japanese (e.g. 午前7時23分) to say exactly as given. " +
+    "The date and time now, as ISO 8601 with a 24-hour clock, the UTC offset, the weekday and the time zone. " +
     "Without `place` it is the learner's own local time, wherever they are: use this for 'what time is it' and " +
     "'what's the date'. The date and time zone in your system prompt are the server's, not the learner's, so " +
     "don't work the time out from them. With `place` it is that place's time.",

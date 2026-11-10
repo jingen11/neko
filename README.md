@@ -76,11 +76,11 @@ Hermes can't enforce a JSON schema, so the reply's shape (ja, en, mood) is in th
 
 `world/` is a small MCP server (stdio) with ねこ's tools for the world right now. ねこ decides when to use them; nothing about the learner's location goes into its prompt.
 
-- `get_time`: the time and date now, written out in Japanese (午前7時23分) for the model to say as given. Without `place`, the learner's own local time; with `place`, that place's (its zone from its coordinates, offline with `@photostructure/tz-lookup`). If the learner hasn't been located, home time.
+- `get_time`: the date and time now, as plain data: ISO 8601 with a 24-hour clock and UTC offset, the weekday and the IANA zone (`2026-11-10T07:23+08:00 (Tuesday, 24-hour clock)`), no language or regional formatting. Without `place`, the learner's own local time; with `place`, that place's (its zone from its coordinates, offline with `@photostructure/tz-lookup`). If the learner hasn't been located, home time.
 - `get_weather`: now and a daily forecast (1–7 days, today/tomorrow in the place's own time) from Open-Meteo (no key). Without `place`, where the learner is; else a `place` name or `latitude`/`longitude`.
 - `where_am_i`: where the learner is (city, region, country, coordinates, IANA time zone, home or away). It reads `GET /api/location` on the neko server, which locates the connected board from its public IP with ip2location.io (`server/src/location.ts`, needs `IP2LOCATION_KEY`).
 
-Time and weather default to where the learner is because Hermes puts the profile's date and time zone in the system prompt, and the model trusted it over `where_am_i` (with the profile set to New York, "what time is it?" came back in New York time). The time is written out in Japanese because the local model turned 24-hour times into the wrong half of the day (07:23 became 午後7時). A name can carry its region and country to pick between same-named places ("Paris, Texas, US"). Names must be in Latin script ("Tokyo", not "東京"): Open-Meteo's place search finds nothing in Japanese script.
+Time and weather default to where the learner is because Hermes puts the profile's date and time zone in the system prompt, and the model trusted it over `where_am_i` (with the profile set to New York, "what time is it?" came back in New York time).
 
 The coordinates come from ip2location.io's answer; the neko server names the IANA time zone from them offline (`@photostructure/tz-lookup`). A name goes through Open-Meteo's place search first, because its forecast takes coordinates.
 
