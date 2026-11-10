@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { FastifyBaseLogger } from "fastify";
 import type { WebSocket } from "ws";
 import type { Anim, ClientMessage, Hello, Mood, ServerMessage } from "../../shared/protocol.ts";
@@ -29,6 +30,8 @@ interface Client {
   busy: boolean;
   ip: string; // its public address (or LAN address at home), from the WebSocket request
   location?: Location; // where it is, from ip (location.ts)
+  /** The board's `net` message: `arrived` settles when it comes, `located` when its address is looked up. */
+  net: { arrived: Promise<void>; arrive: () => void; located?: Promise<void> };
 }
 
 // The Ask conversations are shared by every web client (a reload or a second tab sees the same one), so
@@ -198,6 +201,8 @@ async function onMessage(c: Client, msg: ClientMessage) {
       if (c.location) noteLocation(c.location, msg.client); // located before it said what it is
       log.info(`${msg.client} connected (${msg.deviceId}), voice at ${msg.audioRate} Hz`);
       if (msg.client === "web") for (const kind of ["grammar", "casual"] as const) send(c, askHistory(kind, asking.has(kind)));
+      // ねこ greets by the learner's hour, so wait until the board has said where it is
+      if (msg.client === "board") await boardLocated(c);
       const stats = pet.stats();
       const mood = pet.restingMood(stats);
       setState();
@@ -217,8 +222,9 @@ async function onMessage(c: Client, msg: ClientMessage) {
       // only a public address says where the board is; a 100.x or LAN one from the connection doesn't
       if (typeof msg.publicIp === "string" && !isPrivate(msg.publicIp) && msg.publicIp !== c.ip) {
         c.ip = msg.publicIp;
-        locateClient(c, msg.publicIp);
+        c.net.located = locateClient(c, msg.publicIp);
       }
+      c.net.arrive();
       return;
     case "touch":
       return onTouch(c);
@@ -246,9 +252,19 @@ async function onMessage(c: Client, msg: ClientMessage) {
 
 let lastLocated: Client | null = null;
 
+/**
+ * A board sends `net` (its public IP) right after hello, and the box looks it up. Wait for both before
+ * choosing the greeting, which goes by the learner's hour: up to 1 s for the message (none comes when
+ * the board isn't on Tailscale), then up to 2 s for the lookup.
+ */
+async function boardLocated(c: Client) {
+  const arrived = await Promise.race([c.net.arrived.then(() => true), sleep(1000).then(() => false)]);
+  if (arrived && c.net.located) await Promise.race([c.net.located, sleep(2000)]);
+}
+
 /** Locate a client by an address: the connection's, or the public IP the board reports (`net`). */
-function locateClient(c: Client, ip: string) {
-  locate(ip)
+function locateClient(c: Client, ip: string): Promise<void> {
+  return locate(ip)
     .then((loc) => {
       if (!loc) return;
       c.location = loc;
@@ -272,7 +288,9 @@ export function learnerLocation(): { client: string; location: Location } | null
 
 export function attach(ws: WebSocket, logger: FastifyBaseLogger, ip: string) {
   log = logger;
-  const c: Client = { id: randomUUID(), ws, mic: null, micRate: 16000, micBytes: 0, busy: false, ip };
+  let arrive = () => {};
+  const arrived = new Promise<void>((resolve) => (arrive = resolve));
+  const c: Client = { id: randomUUID(), ws, mic: null, micRate: 16000, micBytes: 0, busy: false, ip, net: { arrived, arrive } };
   clients.add(c);
   locateClient(c, ip);
   ws.on("message", (data, isBinary) => {
