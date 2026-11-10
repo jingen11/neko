@@ -109,17 +109,14 @@ box → board: state{mood, anim, hunger, streak}  say{text, furigana}
 
 The board renders the pet from sprite frames in flash, driven by `state.anim`. No video is streamed.
 
-## ⚠️ Open issue: using the board away from home
+## Using the board away from home: Tailscale
 
-On home Wi-Fi the board connects straight to the box's LAN address. Away from home it has no route to the box:
+The board joins the tailnet itself and reaches the box at its tailnet address (`ws://<box tailnet IP>:8081/ws`), at home and away alike. Nothing on the box is exposed to the internet, so the WebSocket needs no login of its own: being on the tailnet is the login. (A Cloudflare Tunnel with a per-device token was the earlier plan; Tailscale needs no public endpoint.)
 
-- Tailscale/WireGuard clients are not practical on the ESP32-S3, so a VPN-only setup won't work.
-- The box will need a public `wss://` endpoint, most likely a **Cloudflare Tunnel** (no open ports on the router).
-- Once public, the WebSocket **must** authenticate: a per-device token in `hello`, rejected otherwise. (The rest of neko currently has no auth.)
-- Wi-Fi away from home: the board needs to join a phone hotspot — plan a way to configure Wi-Fi credentials (captive-portal provisioning or a list of known networks).
-- Latency over mobile data will be higher; audio may need Opus instead of raw PCM.
-
-Decide this before Phase 5.
+- **On the board:** [microlink](https://github.com/Csontikka/microlink) (Csontikka's fork, the one under `esphome-tailscale`), vendored in `firmware/components/`. It gives lwIP a WireGuard interface, so the ordinary WebSocket client reaches 100.x addresses. Two local changes, listed in `components/microlink/UPSTREAM`: four of its task stacks live in PSRAM (with them in internal RAM, ねこ's voice arriving over WireGuard used up the internal RAM and the screen task hung), and the relay netcheck is skipped (it blocked every join for 25 s). The home relay is fixed (Singapore); it's only used when a direct path can't be made. Joining takes ~7.5 s after Wi-Fi.
+- **Location:** over Tailscale the box sees the board's 100.x address, so the board reports the public IP its STUN probe saw (`net` message) and the box locates it by that; the box's own public IP means home.
+- **Wi-Fi away:** the board's second network is the phone's hotspot (home first, see `firmware/README.md`).
+- **To check:** waking from deep sleep and switching between home and the hotspot (the tailnet has to follow), and latency over mobile data (audio may want Opus instead of raw PCM).
 
 ## Build order (riskiest first)
 
@@ -127,7 +124,7 @@ Decide this before Phase 5.
 2. **Pet engine + PixiJS pet + WebSocket protocol**, browser as the first client. *(Done: protocol in `shared/protocol.ts`; pet drawn from pixel-art GIFs (`web/public/pet/<anim>.gif`, anchored at the feet automatically; drowsy hour around bedtime with yawns, sick when starving, grumpy if petted awake at night); stats in SQLite — practising feeds the pet, petting cheers it up, it sleeps 23:00–07:00 in the learner's time zone.)*
 3. **Vault learning records + Hermes grammar Q&A.** *(Built, being checked on the box: every turn, translation, listening miss, question and review attempt is appended to `~/vault/Japanese/Daily/<date>.md`; listening misses = repeat / slow / opened the English; questions only through the Hermes API server (Hermes reads the notes itself): grammar to the `pro` profile, casual to `default`, no fallback; Review panel and Notes page; weekly review by Hermes cron. Protocol: `ask_grammar` / `ask_casual` → `answer`, `reveal`.)*
 4. **ESP32-S3 firmware** — WebSocket client, audio via ES8311/ES7210, sprite rendering, touch and IMU. *(In progress, `firmware/`: ESP-IDF 5.5 + Waveshare BSP + LVGL 9; the web app's GIFs embedded and played at 3x anchored at the feet; Japanese through TinyTTF + DotGothic16; voice buffered in PSRAM and played at 16 kHz with lip-sync; push-to-talk by holding the screen, the transcript confirmed straight away; correction shown as a card. Not yet: IMU, battery, Wi-Fi provisioning.)*
-5. **Away-from-home access** — see open issue above.
+5. **Away-from-home access** — Tailscale on the board (above). *(Working at home over the tailnet; being tested on the hotspot.)*
 6. **GPS add-on** — pick the module and confirm the UART pads from the schematic, wire it, parse NMEA in firmware, send `location` to the box. Needs 4 (firmware) and is only useful after 5 (away from home).
 7. **Time zone follows the learner** — coordinates → zone on the box, the learner's zone in every Hermes request, ねこ's bedtime and greetings in that zone, and the streak rule above. Works with GPS or a coarser location source; the browser can send its zone before the board exists.
 

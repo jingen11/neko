@@ -57,6 +57,11 @@ export function isPrivate(ip: string): boolean {
 /** Locate a client by its address. Returns null when ip2location.io isn't set up or fails. */
 export async function locate(ip: string): Promise<Location | null> {
   if (!config.ip2locationKey) return null;
+  if (!isPrivate(ip)) {
+    // the board on the home Wi-Fi reports the same public IP as the box's own: that's home
+    const homeLoc = await locate("");
+    if (homeLoc && homeLoc.ip === ip) return homeLoc;
+  }
   const home = isPrivate(ip);
   const key = home ? "" : ip;
   const cached = cache.get(key);

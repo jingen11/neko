@@ -27,6 +27,18 @@ idf.py -p /dev/cu.usbmodem* flash monitor
 
 Wi-Fi settings are saved in `sdkconfig`, which git ignores. If the board doesn't show up as `/dev/cu.usbmodem*`, use a data USB-C cable, or hold **BOOT** while plugging it in.
 
+## Tailscale
+
+The board joins your tailnet with [microlink](https://github.com/Csontikka/microlink) (vendored in `components/`, local changes in `components/microlink/UPSTREAM`) and reaches the box at its tailnet address, at home and away.
+
+1. In the Tailscale admin, **Settings → Keys → Generate auth key**: reusable, pre-approved, not ephemeral (90 days at most; it only matters for joining).
+2. `idf.py menuconfig` → neko: **Tailscale auth key**, **the box's tailnet IP** (`tailscale ip -4` on the box), and set **Box WebSocket URL** to `ws://<that IP>:8081/ws`. Empty key = Tailscale off and the board uses the URL as is.
+3. Flash. It shows as `neko-board`; in **Machines**, **Disable key expiry** for it (and for the box).
+
+Joining takes ~7.5 s after Wi-Fi; the WebSocket starts once it's up. The home relay region (**Tailscale home relay region**, default 3 = Singapore) is only used when a direct path can't be made. The board reports its public IP to the box (`net` message) for the IP location.
+
+Memory: microlink needs ~1 MB of PSRAM and a good share of internal RAM. `sdkconfig.defaults` sends TLS and anything over 4 KB to PSRAM, and microlink's task stacks are in PSRAM; with them in internal RAM, a long voice reply over WireGuard used up the internal RAM and the screen hung.
+
 ## Pins (from the BSP)
 
 | | |

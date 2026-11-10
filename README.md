@@ -12,7 +12,9 @@ Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 - **Phase 4 — the board: in progress.** Firmware in [`firmware/`](firmware/README.md) for the Waveshare ESP32-S3-Touch-LCD-1.83: the same pixel-art cat as the web app, Japanese and English lines (DotGothic16), ねこ's voice on the speaker with lip-sync, push-to-talk (hold the screen), the grammar check as a card, tap to pet. Still to do: IMU reactions, battery, Wi-Fi setup without rebuilding.
 
-Later phases: away-from-home access, GPS add-on.
+- **Phase 5 — away from home: being tested.** The board joins the tailnet itself (microlink) and reaches the box at its tailnet address, from home Wi-Fi or the phone's hotspot; see [Using the board away from home](docs/ARCHITECTURE.md#using-the-board-away-from-home-tailscale).
+
+Later phases: GPS add-on.
 
 ## Services
 

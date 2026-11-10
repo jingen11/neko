@@ -90,7 +90,16 @@ export interface AskReset {
   kind: AskKind;
 }
 
-export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar | AskCasual | AskReset;
+/**
+ * The board's public IP, as its Tailscale client saw it (STUN). Over Tailscale the box only sees the
+ * board's 100.x address, so this is what the box locates it by. Sent on connect and when it changes.
+ */
+export interface NetInfo {
+  type: "net";
+  publicIp: string;
+}
+
+export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar | AskCasual | AskReset | NetInfo;
 
 // ── server → client ──────────────────────────────────────────────────────────
 

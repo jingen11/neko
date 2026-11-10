@@ -30,6 +30,7 @@
 #include "nvs_flash.h"
 #include "cJSON.h"
 #include "esp_websocket_client.h"
+#include "microlink.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
 
@@ -753,6 +754,8 @@ static void handle_message(const char *json, size_t len)
 
 static char rx_buf[8192];
 
+static void send_net(bool force);
+
 static void send_hello(void)
 {
     char buf[512];
@@ -769,6 +772,7 @@ static void ws_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     case WEBSOCKET_EVENT_CONNECTED:
         ESP_LOGI(TAG, "connected to box");
         send_hello();
+        send_net(true); // where the board really is (over Tailscale the box only sees a 100.x address)
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "disconnected from box");
@@ -836,6 +840,7 @@ static volatile bool scanning;
 static esp_timer_handle_t retry_timer, home_check_timer;
 
 static bool configured(int i) { return networks[i].ssid[0] != 0; }
+static void tailnet_start(void);
 
 /** The hotspot's name next to the Wi-Fi bars while away from home. */
 static void show_network(void)
@@ -934,9 +939,86 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         wifi_up = true;
         ESP_LOGI(TAG, "on %s, IP " IPSTR, networks[net].ssid, IP2STR(&e->ip_info.ip));
         show_network();
-        ui_set(lbl_top, "ボックスに接続中…");
-        ws_start(); // the client reconnects by itself after a network change
+        if (CONFIG_NEKO_TAILSCALE_AUTH_KEY[0]) {
+            // the box is reached over the tailnet: connect once Tailscale is up (tailnet_state), not before,
+            // or the first attempt only times out
+            ui_set(lbl_top, "Tailscale に接続中…");
+            tailnet_start();
+        } else {
+            ui_set(lbl_top, "ボックスに接続中…");
+            ws_start(); // the client reconnects by itself after a network change
+        }
     }
+}
+
+// ── Tailscale (trial) ────────────────────────────────────────────────────────
+//
+// microlink (components/microlink, Csontikka's fork) puts the board on the tailnet with its own lwIP
+// interface, so ordinary sockets reach 100.x addresses. Off while the auth key is empty.
+
+static microlink_t *tailnet;
+static esp_timer_handle_t net_timer;
+
+/**
+ * The board's public IP (what microlink's STUN saw), for the box's IP location: over Tailscale the box
+ * only sees the board's 100.x address. Sent on connect and whenever it changes.
+ */
+static void send_net(bool force)
+{
+    static uint32_t sent;
+    if (!tailnet || !ws_ready()) return;
+    microlink_diag_t d;
+    if (microlink_get_diag(tailnet, &d) != ESP_OK || !d.wan_public_ip) return;
+    if (!force && d.wan_public_ip == sent) return;
+    char ip[16], buf[64];
+    microlink_ip_to_str(d.wan_public_ip, ip);
+    int n = snprintf(buf, sizeof buf, "{\"type\":\"net\",\"publicIp\":\"%s\"}", ip);
+    if (esp_websocket_client_send_text(ws, buf, n, pdMS_TO_TICKS(1000)) == n) {
+        sent = d.wan_public_ip;
+        ESP_LOGI(TAG, "public IP %s", ip);
+    }
+}
+
+static void net_check(void *arg) { send_net(false); }
+
+static void tailnet_state(microlink_t *ml, microlink_state_t state, void *arg)
+{
+    static const char *names[] = {"idle", "waiting for Wi-Fi", "connecting", "registering", "connected", "reconnecting", "error"};
+    char ip[16] = "";
+    if (state == ML_STATE_CONNECTED) {
+        microlink_ip_to_str(microlink_get_vpn_ip(ml), ip);
+        ui_set(lbl_top, "ボックスに接続中…");
+        ws_start(); // once; the client reconnects by itself after that
+    }
+    ESP_LOGI(TAG, "tailnet: %s %s (free internal %u KB, PSRAM %u KB)", state < 7 ? names[state] : "?", ip,
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+}
+
+static void tailnet_start(void)
+{
+    if (tailnet || !CONFIG_NEKO_TAILSCALE_AUTH_KEY[0]) return;
+    ESP_LOGI(TAG, "tailnet: starting (free internal %u KB)", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+    microlink_config_t cfg = {
+        .auth_key = CONFIG_NEKO_TAILSCALE_AUTH_KEY,
+        .device_name = "neko-board",
+        .enable_derp = true,
+        .enable_stun = true,
+        .enable_disco = true,
+        .max_peers = 8,
+        .priority_peer_ip = CONFIG_NEKO_TAILSCALE_BOX[0] ? microlink_parse_ip(CONFIG_NEKO_TAILSCALE_BOX) : 0,
+        // a fixed home relay, no netcheck: measuring every region took 25 s per join (see components/microlink/UPSTREAM)
+        .preferred_derp_region = CONFIG_NEKO_TAILSCALE_DERP_REGION,
+        .netcheck_override_enabled = false,
+    };
+    tailnet = microlink_init(&cfg);
+    if (!tailnet) {
+        ESP_LOGE(TAG, "tailnet: init failed");
+        return;
+    }
+    microlink_set_state_callback(tailnet, tailnet_state, NULL);
+    if (microlink_start(tailnet) != ESP_OK) ESP_LOGE(TAG, "tailnet: start failed");
+    esp_timer_create_args_t check = {.callback = net_check, .name = "net_check"};
+    if (esp_timer_create(&check, &net_timer) == ESP_OK) esp_timer_start_periodic(net_timer, 30 * 1000000LL);
 }
 
 static void wifi_start(void)
