@@ -84,26 +84,18 @@ The board has no GNSS receiver, so location comes from a small external module w
 - **Privacy:** location goes only to the box, over the tailnet. The box keeps the **latest fix in memory only** — no location history, and nothing written to the vault — unless that is decided later.
 - **Uses:** weather for where you are (the Hermes `neko` profile), time zone when travelling, and place-aware practice later (ねこ notices you're at a station or a café and suggests phrases).
 
-**How the code changes:**
+### Travelling: the time zone follows the learner
 
-- **Box first (works before the module arrives):** remove ip2location, `IP2LOCATION_KEY`, the connection-address logic and the `net {publicIp}` message. The board sends `location {lat, lon, accuracy_m, sats, at}`; the box keeps the latest fix in memory. **Home comes from Wi-Fi, not GPS** (GPS rarely works indoors): the board says it's on home Wi-Fi and the box uses a configured home location (`NEKO_HOME_LAT` / `NEKO_HOME_LON`). Trust order: a fresh fix, then home, then the last fix with its age, else unknown.
-- **Place names** by reverse geocoding with **Nominatim** (OpenStreetMap, no key): only after ~200 m of movement (well under its 1 request/s limit), names in English and Japanese (`accept-language`, e.g. 渋谷区、東京都), identifying as the app (`neko-pet`); if it fails, coordinates only. The time zone stays offline (`@photostructure/tz-lookup`).
-- **World tools** (`where_am_i`, `get_time`, `get_weather`) keep reading `GET /api/location`; they gain the fix's accuracy and age, and the weather uses exact coordinates.
-- **Firmware:** `gps.c` reads NMEA (GGA, RMC) from the UART (ESP-IDF's nmea_parser example); GPS off on home Wi-Fi and in deep sleep, duty-cycled away (on until a fix, then a fix every few minutes); `location` sent on a new fix, at most every few minutes or after ~100 m; a GPS icon in the status row; GPS time can set the clock when there's no network.
-- **Shopping:** 3.3 V supply and UART, built-in patch antenna, GPS + Galileo + BeiDou + QZSS (u-blox M10, e.g. Beitian BE-180/BE-220/BE-880 or SparkFun MAX-M10S; budget: ATGM336H mini), ideally a backup battery / V_BAT pin for fast re-fixes.
-
-### Travelling: the time zone follows the learner (planned)
-
-neko's own clock (the pet's bedtime, "today" for the streak, note times) now follows the board (step 2). Hermes's clock is still fixed to the box at home (KL): `timezone: Asia/Kuala_Lumpur` in each Hermes profile's `config.yaml` (under the multiplexed gateway Hermes ignores `HERMES_TIMEZONE` in `.env`), and Hermes puts that date and zone in ねこ's system prompt. The model trusted it, so ねこ's time and weather tools (`world/`) default to where the learner is instead of taking a zone.
+**Decided: which clock follows the learner.** Only what ねこ says and does follows the learner's local zone: its **time answers** (`get_time`), its **bedtime** (23:00–07:00, with the drowsy hour) and its **greetings**. The **streak** ("today", practice per day) and the **dates and times in the vault notes** stay on the **box's zone** (KL), so travelling never repeats or skips a streak day and the notes stay in one timeline. *(In code (`server/src/pet.ts`, #39): `boxDay()` for the streak, the daily challenge and the notes; `learnerHour()` for bedtime, the drowsy hour and greetings. The learner's zone comes from `learnerTimeZone()` in `location.ts`: where the board was last located, else the box's own zone.)* Hermes's own clock stays fixed to the box (KL): `timezone: Asia/Kuala_Lumpur` in each Hermes profile's `config.yaml` (under the multiplexed gateway Hermes ignores `HERMES_TIMEZONE` in `.env`), and Hermes puts that date and zone in ねこ's system prompt; the model trusted it, so ねこ's time and weather tools (`world/`) default to where the learner is instead of taking a zone.
 
 The box keeps its own zone; the **learner's current zone** travels with the board:
 
 1. **Board reports where you are.** From the GPS add-on, or, for the zone alone, something coarser: Wi-Fi positioning or the phone hotspot's IP location (the right country or region is enough). The browser app can also send its own zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`).
 2. **The box works out the zone.** *(Done for the IP route: `server/src/location.ts` locates the board's public IP with ip2location.io and names the zone from its coordinates offline with `@photostructure/tz-lookup`, e.g. `Asia/Tokyo`, cached 6 h per address in memory. The board's zone wins over a browser's; before anything is located, the box's own zone. `NEKO_TZ` is gone: the pet's bedtime, "today" for the streak and note times all use it.)*
 3. **ねこ's tools know it.** *(Done, differently from first planned: nothing goes into the prompt.)* `get_time()` and `get_weather()` in `world/` default to the learner's location from `GET /api/location`, so the model never needs a zone. Hermes's own `timezone` stays KL, for cron and the box.
-4. **ねこ follows it too:** bedtime (23:00–07:00) and greetings use the learner's current zone.
+4. **ねこ follows it too:** bedtime (23:00–07:00) and greetings use the learner's current zone *(done: greetings go by the learner's hour, おはよう / こんにちは / こんばんは)*. The streak stays on the box's zone (decided above).
 
-**Open decision — the streak while travelling.** Changing zones can repeat or skip a calendar day. Proposed rule: count days in the learner's current zone, but a zone change never breaks the streak (a day lost to a jump counts as kept; a repeated day counts once).
+**Decided — the streak while travelling:** it counts days in the box's zone (KL), not the learner's, so a zone change can't repeat or skip a day.
 
 ### Board ↔ box protocol (one WebSocket)
 
@@ -126,7 +118,7 @@ The board joins the tailnet itself and reaches the box at its tailnet address (`
 - **On the board:** [microlink](https://github.com/Csontikka/microlink) (Csontikka's fork, the one under `esphome-tailscale`), vendored in `firmware/components/`. It gives lwIP a WireGuard interface, so the ordinary WebSocket client reaches 100.x addresses. Two local changes, listed in `components/microlink/UPSTREAM`: four of its task stacks live in PSRAM (with them in internal RAM, ねこ's voice arriving over WireGuard used up the internal RAM and the screen task hung), and the relay netcheck is skipped (it blocked every join for 25 s). The home relay is fixed (Singapore); it's only used when a direct path can't be made. Joining takes ~7.5 s after Wi-Fi.
 - **Location:** over Tailscale the box sees the board's 100.x address, so the board reports the public IP its STUN probe saw (`net` message) and the box locates it by that; the box's own public IP means home.
 - **Wi-Fi away:** the board's second network is the phone's hotspot (home first, see `firmware/README.md`).
-- **To check:** waking from deep sleep and switching between home and the hotspot (the tailnet has to follow), and latency over mobile data (audio may want Opus instead of raw PCM).
+- **Tested:** switching between home Wi-Fi and the phone's hotspot works; the board reaches the box from either. **Still to check:** waking from deep sleep on the hotspot, and latency over mobile data (audio may want Opus instead of raw PCM).
 
 ## Build order (riskiest first)
 
