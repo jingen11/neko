@@ -1,0 +1,23 @@
+# Shared by every presence board. Each board file sets `name` and `ip_secret`
+# in substitutions and includes this as a package.
+esphome:
+  name: ${name}
+
+esp32:
+  variant: esp32c6
+  framework:
+    type: esp-idf        # the C6 needs esp-idf, not Arduino
+
+logger:
+ota:
+  - platform: esphome
+    password: !secret ota_pw
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_pw
+
+mqtt:
+  broker: !secret mqtt_broker   # the box's router IP, not the Tailscale one
+  username: ${name}             # each board has its own Mosquitto user, named after it
+  password: !secret mqtt_pw
