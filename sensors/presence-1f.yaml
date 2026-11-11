@@ -1,0 +1,8 @@
+substitutions:
+  name: presence-1f
+
+packages:
+  base: !include presence-base.yaml
+
+wifi:
+  use_address: !secret presence_1f_ip   # fixed by DHCP reservation; OTA and logs go here
