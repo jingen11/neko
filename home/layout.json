@@ -1,0 +1,6 @@
+{
+  "devices": {
+    "presence-gf": { "label": "Ground floor sensor", "room": "living" },
+    "presence-1f": { "label": "Upper floor sensor", "room": "uliving" }
+  }
+}

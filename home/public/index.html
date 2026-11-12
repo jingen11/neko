@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Home: live presence in the house</title>
+  <meta name="description" content="A 3D view of the house with each room lit where someone is, and every door and window that's open.">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#eef3f9">
+  <link rel="icon" href="assets/favicon-32.png" sizes="32x32">
+  <link rel="icon" href="assets/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <!-- the 3D house fills the screen; everything else floats over it -->
+  <section class="stage" id="stage" aria-label="3D house">
+    <div class="tags" id="tags"></div>
+    <div class="seg glass" role="group" aria-label="View">
+      <button data-view="out" aria-pressed="true"><img src="assets/icons/home.png" alt=""><span>Whole house</span></button>
+      <button data-view="g" aria-pressed="false"><img src="assets/icons/floors.png" alt=""><span>Ground</span></button>
+      <button data-view="u" aria-pressed="false"><img src="assets/icons/floors.png" alt=""><span>Upper</span></button>
+    </div>
+
+    <div class="tools">
+      <div class="tool glass compass" aria-hidden="true"><img id="compass" src="assets/icons/compass.png" alt=""></div>
+      <div class="glass tool-group">
+        <button class="tool" id="zoom-in" aria-label="Zoom in"><img src="assets/icons/zoom-in.png" alt=""></button>
+        <button class="tool" id="zoom-out" aria-label="Zoom out"><img src="assets/icons/zoom-out.png" alt=""></button>
+        <button class="tool" id="reset" aria-label="Reset the view"><img src="assets/icons/reset-view.png" alt=""></button>
+      </div>
+    </div>
+
+    <aside class="glass room-card" id="room-card" hidden></aside>
+    <p class="hint mono">Drag to turn · scroll to zoom · click a room</p>
+  </section>
+
+  <nav class="rail glass" aria-label="Main">
+    <img class="logo" src="assets/cat/cat_app_128.png" alt="Home" width="44" height="44">
+    <div class="rail-nav">
+      <button class="rail-btn" data-page="overview" aria-current="page" aria-label="Overview" title="Overview"><img src="assets/icons/dashboard.png" alt=""></button>
+      <button class="rail-btn" data-page="devices" aria-label="Devices" title="Devices"><img src="assets/icons/devices.png" alt=""></button>
+      <a class="rail-btn" href="https://neko.home.je-dev.com" aria-label="ねこ, the Japanese-learning pet" title="ねこ"><img src="assets/icons/cat-status.png" alt=""></a>
+    </div>
+    <div class="link" id="link" role="status" title="Connecting">
+      <span class="dot"></span><span class="sr" id="link-text">Connecting</span>
+    </div>
+  </nav>
+
+  <main class="hud glass" id="panel"></main>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

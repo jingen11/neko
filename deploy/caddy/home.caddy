@@ -1,0 +1,10 @@
+# Home dashboard at https://dash.home.je-dev.com.
+# Goes inside the existing *.home.je-dev.com block in /etc/caddy/Caddyfile, above the final
+# `handle { abort }`. The wildcard DNS record and certificate already cover it.
+	@home host dash.home.je-dev.com
+	handle @home {
+		# flush_interval -1: pass live updates (server-sent events on /api/events) straight through
+		reverse_proxy localhost:8090 {
+			flush_interval -1
+		}
+	}
