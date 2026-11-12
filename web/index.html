@@ -1,50 +1,57 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>neko</title>
-<link rel="icon" href="/pet/mark.png">
+<meta name="theme-color" content="#eef3f9">
+<link rel="icon" href="/favicon-32.png" sizes="32x32">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Noto+Serif+JP:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
-<header class="bar">
-  <a class="brand" href="/"><img src="/pet/mark.png" alt="" width="24" height="24"><span>neko</span></a>
-  <div class="bar-right">
-    <span id="conn" class="conn" data-state="off">Not connected</span>
-    <span id="level" class="pill" hidden></span>
-    <a href="/notes.html">Notes</a>
-    <a href="/lab.html">Voice lab</a>
+<nav class="rail glass" aria-label="Main">
+  <a class="logo-link" href="/" aria-label="neko"><img class="logo" src="/icons/logo.png" alt="" width="44" height="44"></a>
+  <div class="rail-nav">
+    <a class="rail-btn" href="/" aria-current="page" aria-label="Practice" title="Practice"><img src="/icons/dashboard.png" alt=""></a>
+    <a class="rail-btn" href="/notes.html" aria-label="Notes" title="Notes"><img src="/icons/schedules.png" alt=""></a>
+    <a class="rail-btn" href="/lab.html" aria-label="Voice lab" title="Voice lab"><img src="/icons/devices.png" alt=""></a>
+    <a class="rail-btn" href="https://dash.home.je-dev.com" aria-label="Home dashboard" title="Home dashboard"><img src="/icons/home.png" alt=""></a>
   </div>
-</header>
+  <span id="conn" class="conn" data-state="off" role="status">Not connected</span>
+</nav>
 
 <main class="canvas">
-  <div class="title">
-    <h1 id="greeting" lang="ja">こんにちは、<span class="petName">ねこ</span></h1>
-    <p class="sub"><span id="date"></span> · <span id="finding">Wake <span class="petName" lang="ja">ねこ</span> to start today's practice.</span></p>
-  </div>
+  <header class="title">
+    <div>
+      <h1 id="greeting" lang="ja">こんにちは、<span class="petName">ねこ</span></h1>
+      <p class="sub"><span id="date"></span> · <span id="finding">Wake <span class="petName" lang="ja">ねこ</span> to start today's practice.</span></p>
+    </div>
+    <span id="level" class="pill level" hidden></span>
+  </header>
 
   <section class="kpis" aria-label="Stats">
     <div class="kpi">
-      <h2 class="kpi-label">Fullness</h2>
+      <h2 class="kpi-label"><img src="/icons/pet-feeder.png" alt="">Fullness</h2>
       <p class="kpi-value"><span id="full" class="skel">—</span><small> /100</small></p>
       <div class="track"><i id="fullBar"></i></div>
       <p class="kpi-cap" id="fullCap">&nbsp;</p>
     </div>
     <div class="kpi">
-      <h2 class="kpi-label">Happiness</h2>
+      <h2 class="kpi-label"><img src="/icons/pet-activity.png" alt="">Happiness</h2>
       <p class="kpi-value"><span id="joy" class="skel">—</span><small> /100</small></p>
       <div class="track"><i id="joyBar"></i></div>
       <p class="kpi-cap" id="joyCap">&nbsp;</p>
     </div>
     <div class="kpi">
-      <h2 class="kpi-label">Streak</h2>
+      <h2 class="kpi-label"><img src="/icons/fire.png" alt="">Streak</h2>
       <p class="kpi-value"><span id="streak" class="skel">—</span><small id="streakUnit"> days</small></p>
       <p class="kpi-cap" id="streakCap">&nbsp;</p>
     </div>
     <div class="kpi">
-      <h2 class="kpi-label">Today</h2>
+      <h2 class="kpi-label"><img src="/icons/cat-status.png" alt="">Today</h2>
       <p class="kpi-value"><span id="today" class="skel">—</span><small id="todayUnit"> sentences</small></p>
       <p class="kpi-cap">Each one feeds <span class="petName" lang="ja">ねこ</span> 15</p>
     </div>

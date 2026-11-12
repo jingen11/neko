@@ -3,68 +3,130 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>neko — speech loop</title>
+<title>neko voice lab</title>
+<meta name="theme-color" content="#eef3f9">
+<link rel="icon" href="/favicon-32.png" sizes="32x32">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
+  /* styled after the home dashboard and the practice page: a light HUD with frosted glass */
   :root {
-    --bg: #faf7f2; --panel: #ffffff; --ink: #2b2622; --muted: #8a8079; --line: #e8e1d8;
-    --accent: #e0793c; --accent-ink: #fff; --ok: #3f8f5a; --bad: #c0453a; --warn: #b7862a; --pet: #fff4ea; --me: #eef3fb;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #1c1a18; --panel: #262320; --ink: #eee7df; --muted: #9c938b; --line: #3a3530;
-      --accent: #f08a4b; --accent-ink: #1c1a18; --ok: #6cc08a; --bad: #ec7b70; --warn: #e0b45c; --pet: #33281f; --me: #232b37; }
+    --bg: #eef3f9; --glass: rgb(255 255 255 / .66); --glass-hi: rgb(255 255 255 / .9); --glass-line: rgb(255 255 255 / .85);
+    --line: rgb(16 43 83 / .1); --line-2: rgb(16 43 83 / .16);
+    --ink: #102b53; --muted: #56698a; --accent: #0a84ff; --accent-weak: rgb(10 132 255 / .1);
+    --glow: 0 0 0 1px rgb(10 132 255 / .55), 0 0 22px rgb(10 132 255 / .28);
+    --warm: #f39a38; --warm-ink: #b85a08; --warm-weak: rgb(243 154 56 / .14);
+    --ok: #0f9d6a; --ok-weak: rgb(15 157 106 / .14); --bad: #c2352b; --off: #93a1b8;
+    --shadow: 0 12px 40px rgb(16 43 83 / .1), 0 2px 6px rgb(16 43 83 / .05);
+    --head: "Space Grotesk", "Noto Sans JP", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+    --rail: 72px; --edge: 16px;
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; }
-  main { max-width: 720px; margin: 0 auto; padding: 16px 16px 200px; }
-  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  h1 { font-size: 22px; margin: 8px 0; }
-  .status { font-size: 13px; color: var(--muted); }
+  body { margin: 0; color: var(--ink); font: 15px/1.6 "Inter", "Noto Sans JP", "Hiragino Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+    background: radial-gradient(1200px 700px at 75% -10%, rgb(10 132 255 / .08), transparent 60%),
+                radial-gradient(900px 600px at 0% 100%, rgb(243 154 56 / .07), transparent 60%), var(--bg);
+    background-attachment: fixed; min-height: 100vh; }
+  img { display: block; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .glass { background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow), inset 0 1px 0 var(--glass-hi);
+    backdrop-filter: blur(18px) saturate(1.5); -webkit-backdrop-filter: blur(18px) saturate(1.5); }
+
+  /* the rail, as on the practice page */
+  .rail { position: fixed; z-index: 5; left: var(--edge); top: var(--edge); bottom: var(--edge); width: var(--rail); border-radius: 20px;
+    display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 14px 0; }
+  .logo { width: 44px; height: 44px; border-radius: 12px; box-shadow: 0 4px 14px rgb(16 43 83 / .18); }
+  .rail-nav { display: flex; flex-direction: column; gap: 8px; }
+  .rail-btn { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 14px; transition: background .16s, border-color .16s, transform .1s, box-shadow .16s; }
+  .rail-btn img { width: 26px; height: 26px; }
+  .rail-btn:hover { background: var(--glass-hi); border-color: var(--line); }
+  .rail-btn:active { transform: scale(.95); }
+  .rail-btn[aria-current="page"] { background: #fff; box-shadow: var(--glow); }
+
+  main { max-width: 820px; margin: 0 auto; padding: 32px 24px 220px calc(var(--rail) + var(--edge) * 2 + 16px); }
+  header { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font: 700 40px/1.1 var(--head); letter-spacing: -0.02em; margin: 0; }
+  .lede { margin: 8px 0 0; color: var(--muted); }
+  .status { font: 500 12.5px var(--mono); color: var(--muted); padding: 6px 12px; border-radius: 12px; }
+  .status b { font-weight: 600; color: var(--ink); }
   .status b.ok { color: var(--ok); } .status b.bad { color: var(--bad); }
-  nav { display: flex; gap: 6px; margin: 8px 0 4px; }
-  nav button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  nav.tabs { display: inline-flex; gap: 4px; padding: 4px; margin: 24px 0 4px; border-radius: 14px; background: rgb(255 255 255 / .6); border: 1px solid var(--line); }
+  nav.tabs button { height: 34px; padding: 0 16px; border: 0; border-radius: 10px; background: none; font: 600 14px var(--head); color: var(--muted); }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button.active { background: #fff; color: var(--ink); box-shadow: var(--glow); }
   .hidden-tab { display: none !important; }
   #log { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
-  .msg { padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); }
-  .me { background: var(--me); align-self: flex-end; max-width: 90%; }
-  .pet { background: var(--pet); align-self: flex-start; max-width: 90%; }
+  .msg { padding: 12px 14px; border-radius: 16px; border: 1px solid var(--line); }
+  .me { background: var(--accent-weak); border-color: rgb(10 132 255 / .18); align-self: flex-end; max-width: 90%; border-bottom-right-radius: 6px; }
+  .pet { background: #fff; align-self: flex-start; max-width: 90%; border-bottom-left-radius: 6px; box-shadow: 0 2px 8px rgb(16 43 83 / .05); }
   .ja { font-size: 20px; }
   .en { color: var(--muted); font-size: 14px; }
   .en.blur { filter: blur(5px); cursor: pointer; user-select: none; }
   .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
-  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 10px; padding: 6px 12px; cursor: pointer; }
+  button { font: 600 14px var(--head); border: 1px solid var(--line-2); background: #fff; color: var(--ink); border-radius: 12px; padding: 6px 14px; cursor: pointer; transition: border-color .16s, color .16s, box-shadow .16s, transform .09s; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:active:not(:disabled) { transform: scale(.97); }
   button:disabled { opacity: .5; cursor: default; }
-  .card { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 14px; }
-  .card.good { border-color: var(--ok); } .card.fix { border-color: var(--bad); } .card.wait { color: var(--muted); }
+  code { font: 500 12.5px var(--mono); background: var(--accent-weak); padding: 1px 5px; border-radius: 5px; }
+  .card { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: #fff; border: 1px solid var(--line); font-size: 14px; }
+  .card.good { border-color: var(--ok); box-shadow: 0 0 0 3px var(--ok-weak); } .card.fix { border-color: var(--warm); box-shadow: 0 0 0 3px var(--warm-weak); } .card.wait { color: var(--muted); }
   .card .corrected { font-size: 18px; }
   .card del { color: var(--bad); } .card ins { color: var(--ok); text-decoration: none; font-weight: 600; }
-  .timings { font-size: 12px; color: var(--muted); margin-top: 6px; }
-  #dock { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); }
-  #dock .inner { max-width: 720px; margin: 0 auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
-  textarea { width: 100%; font: inherit; font-size: 18px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); resize: none; }
-  .talk { background: var(--accent); color: var(--accent-ink); border: none; padding: 14px; font-size: 18px; font-weight: 600; touch-action: none; }
-  .talk.rec { background: var(--bad); }
-  .hint { font-size: 12px; color: var(--muted); text-align: center; }
+  .timings { font: 500 12px var(--mono); color: var(--muted); margin-top: 6px; }
+  #dock { position: fixed; z-index: 4; left: calc(var(--rail) + var(--edge) * 2); right: var(--edge); bottom: var(--edge); border-radius: 20px; }
+  #dock .inner { max-width: 780px; margin: 0 auto; padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+  textarea { width: 100%; font: inherit; font-size: 18px; padding: 8px 12px; border-radius: 14px; border: 1px solid var(--line-2); background: #fff; color: var(--ink); resize: none; transition: box-shadow .16s, border-color .16s; }
+  textarea:focus { outline: none; border-color: transparent; box-shadow: var(--glow); }
+  .talk { background: var(--accent); color: #fff; border: none; padding: 14px; font-size: 17px; touch-action: none; box-shadow: 0 6px 18px rgb(10 132 255 / .35); }
+  .talk:hover:not(:disabled) { background: #0070e0; color: #fff; }
+  .talk.rec { background: var(--bad); box-shadow: 0 0 0 4px rgb(194 53 43 / .15), 0 6px 18px rgb(194 53 43 / .35); }
+  .hint { font-size: 12.5px; color: var(--muted); text-align: center; }
   /* voice test */
   #testIntro { color: var(--muted); font-size: 14px; margin: 12px 0; }
-  #testSummary { font-weight: 600; margin: 8px 0 12px; }
-  .case { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); margin-bottom: 10px; }
-  .case.current { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
-  .case .num { color: var(--muted); font-size: 13px; }
+  #testSummary { font: 600 14px var(--mono); margin: 8px 0 12px; }
+  .case { padding: 14px 16px; border-radius: 16px; margin-bottom: 10px; background: rgb(255 255 255 / .72); border: 1px solid var(--line); transition: box-shadow .16s; }
+  .case.current { background: #fff; border-color: transparent; box-shadow: var(--glow); }
+  .case .num { font: 500 12.5px var(--mono); color: var(--muted); }
   .case .romaji { font-size: 14px; }
-  .case .mistake { font-size: 13px; color: var(--warn); }
+  .case .mistake { font-size: 13px; color: var(--warm-ink); }
   .case .mistake.correct { color: var(--ok); }
   .case .result { font-size: 14px; }
-  .verdict { font-weight: 600; } .verdict.kept { color: var(--ok); } .verdict.fixed { color: var(--bad); } .verdict.other { color: var(--warn); }
+  .verdict { font-weight: 600; } .verdict.kept { color: var(--ok); } .verdict.fixed { color: var(--bad); } .verdict.other { color: var(--warm-ink); }
   .case .talk { padding: 8px 14px; font-size: 15px; }
+
+  @media (max-width: 900px) {
+    .rail { position: sticky; top: 0; left: auto; bottom: auto; width: auto; flex-direction: row; padding: 8px 12px; border-radius: 0; border-width: 0 0 1px; }
+    .logo { width: 40px; height: 40px; }
+    .rail-nav { flex-direction: row; margin-left: auto; }
+    main { padding: 24px 16px 230px; }
+    #dock { left: 0; right: 0; bottom: 0; border-radius: 20px 20px 0 0; }
+    h1 { font-size: 30px; }
+  }
+  @media (max-width: 560px) { .rail-nav { gap: 2px; } .rail-btn { width: 44px; height: 44px; } .rail { gap: 12px; padding: 6px 8px; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
+<nav class="rail glass" aria-label="Main">
+  <a href="/" aria-label="neko"><img class="logo" src="/icons/logo.png" alt="" width="44" height="44"></a>
+  <div class="rail-nav">
+    <a class="rail-btn" href="/" aria-label="Practice" title="Practice"><img src="/icons/dashboard.png" alt=""></a>
+    <a class="rail-btn" href="/notes.html" aria-label="Notes" title="Notes"><img src="/icons/schedules.png" alt=""></a>
+    <a class="rail-btn" href="/lab.html" aria-current="page" aria-label="Voice lab" title="Voice lab"><img src="/icons/devices.png" alt=""></a>
+    <a class="rail-btn" href="https://dash.home.je-dev.com" aria-label="Home dashboard" title="Home dashboard"><img src="/icons/home.png" alt=""></a>
+  </div>
+</nav>
 <main>
   <header>
-    <h1>🐱 neko — speech loop</h1>
-    <div class="status" id="status">checking services…</div>
+    <div>
+      <h1>Voice lab</h1>
+      <p class="lede">Test the speech loop: speech-to-text, grammar check and the spoken reply.</p>
+    </div>
+    <div class="status glass" id="status">checking services…</div>
   </header>
-  <nav>
+  <nav class="tabs" aria-label="Lab">
     <button data-tab="talk" class="active">Talk</button>
     <button data-tab="test">Voice test</button>
   </nav>
@@ -78,7 +140,7 @@
   </section>
 </main>
 
-<div id="dock"><div class="inner">
+<div id="dock" class="glass"><div class="inner">
   <textarea id="text" rows="2" placeholder="Hold the button and speak Japanese — or type here. Check the transcript, then Send."></textarea>
   <div class="row" style="margin:0">
     <button id="talk" class="talk" style="flex:1">🎤 Hold to talk</button>
