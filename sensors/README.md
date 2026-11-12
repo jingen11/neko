@@ -20,13 +20,25 @@ Everything shared lives in `presence-base.yaml`; each board file only sets its `
 
 The sensor streams `ON`/`OFF` and `Range <cm>` lines at 115200 baud, about 10 a second. If a board reads nothing, check the wires first: both faults so far were broken jumper wires.
 
+## Range cap
+
+The sensor itself can see 5 m or more, including through thin walls. `presence-base.yaml` drops anything beyond `max_range_cm` (default `300`) in firmware. To change it for one board, add it to that board file's `substitutions:`:
+
+```yaml
+substitutions:
+  name: presence-gf
+  max_range_cm: "400"
+```
+
+The sensor's own max-gate setting isn't used: the vendor wiki documents reading it but not the write command.
+
 ## MQTT topics
 
 | Topic | Payload | Retained |
 |---|---|---|
 | `<board>/status` | `online` / `offline` (offline about a minute after the board loses power) | yes |
-| `<board>/binary_sensor/occupied/state` | `ON` / `OFF`, on change | yes |
-| `<board>/sensor/distance/state` | cm to the detected person; median-filtered, at most once a second, only on a change of 15 cm or more; only updates while `ON` | yes |
+| `<board>/binary_sensor/occupied/state` | `ON` / `OFF`, on change. Only counts people within `max_range_cm` (default 300); goes `OFF` after 5 s with nobody that close | yes |
+| `<board>/sensor/distance/state` | cm to the detected person; median-filtered, at most once a second, only on a change of 15 cm or more; only updates while someone is within range | yes |
 | `<board>/debug` | ESPHome log lines | no |
 
 ## Setup
