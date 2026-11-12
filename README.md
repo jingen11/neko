@@ -30,6 +30,8 @@ neko is a Fastify server that calls these local services:
 | MQTT broker (Zigbee2MQTT) | `MQTT_URL`, e.g. `mqtt://127.0.0.1:1883` | Home sensors: ねこ reacts when the front door opens or the window shakes (optional: off while `MQTT_URL` is empty) |
 | ip2location.io | `https://api.ip2location.io` | Where each client is, from its public IP (`server/src/location.ts`): the address comes from `CF-Connecting-IP` behind the Cloudflare Tunnel, else the socket; a LAN address means home, so the box locates itself. Cached 6 h per address, logged on connect (optional: off while `IP2LOCATION_KEY` is empty) |
 
+**Home dashboard.** `home/` is a separate small server (`:8090`, service `neko-home`) that shows the home sensors at https://dash.home.je-dev.com; see [home/README.md](home/README.md).
+
 Binaries live in `~/apps/`, speech models in `~/models/stt/`.
 
 ### Running as services (recommended)
