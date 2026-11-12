@@ -1,5 +1,9 @@
-# Shared by every presence board. Each board file sets `name` and `ip_secret`
-# in substitutions and includes this as a package.
+# Shared by every presence board. Each board file sets `name` in substitutions,
+# its IP secret, and includes this as a package. A board file can also override
+# `max_range_cm` in its own substitutions.
+substitutions:
+  max_range_cm: "300"   # detections farther than this count as nobody there
+
 esphome:
   name: ${name}
 
@@ -21,3 +25,60 @@ mqtt:
   broker: !secret mqtt_broker   # the box's router IP, not the Tailscale one
   username: ${name}             # each board has its own Mosquitto user, named after it
   password: !secret mqtt_pw
+
+# HMMD 24 GHz mmWave (S3KM1110). It streams text lines ~10x a second:
+#   "ON" / "OFF"   presence
+#   "Range <cm>"   distance to the detected person, only while ON
+uart:
+  id: mmwave_uart
+  tx_pin: GPIO16   # board TX -> sensor RX
+  rx_pin: GPIO17   # board RX <- sensor TX
+  baud_rate: 115200
+  rx_buffer_size: 512
+
+interval:
+  - interval: 100ms
+    then:
+      - lambda: |-
+          static std::string line;
+          uint8_t c;
+          while (id(mmwave_uart).available() && id(mmwave_uart).read_byte(&c)) {
+            if (c == '\n') {
+              if (!line.empty() && line.back() == '\r') line.pop_back();
+              // "ON" is always followed by a "Range" line, so presence is decided there:
+              // a person beyond max_range_cm (another room, through a wall) counts as absent.
+              if (line == "OFF") {
+                id(occupied).publish_state(false);
+              } else if (line.rfind("Range ", 0) == 0) {
+                int cm = atoi(line.c_str() + 6);
+                bool near = cm <= ${max_range_cm};
+                id(occupied).publish_state(near);
+                if (near) id(distance).publish_state(cm);
+              }
+              line.clear();
+            } else if (c != 0 && line.size() < 64) {   // skip stray NUL bytes from line glitches
+              line += (char) c;
+            }
+          }
+
+binary_sensor:
+  - platform: template
+    id: occupied
+    name: Occupied           # -> ${name}/binary_sensor/occupied/state  ON | OFF
+    device_class: occupancy
+    filters:
+      - delayed_off: 5s      # a one-off far reading (e.g. 661 cm spike) mustn't flip it OFF
+
+sensor:
+  - platform: template
+    id: distance
+    name: Distance           # -> ${name}/sensor/distance/state  cm
+    unit_of_measurement: cm
+    accuracy_decimals: 0
+    update_interval: never   # pushed by the UART parser above
+    filters:
+      - median:              # drop one-off spikes (e.g. a 27 -> 270 -> 27 jump)
+          window_size: 5
+          send_every: 1
+      - throttle_average: 1s # at most one value a second, averaged over it
+      - delta: 15            # and only when it moved 15 cm or more
