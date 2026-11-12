@@ -293,6 +293,31 @@ function branch(group,a,b,r,material){
   mesh.position.copy(p.add(q).multiplyScalar(.5));mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
   mesh.castShadow=true;group.add(mesh);
 }
+function roofQuad(group,a,b,c,d,th,material){
+  const pts=[a,b,c,d];
+  const down=pts.map(([x,y,z])=>[x,y-th,z]);
+  const faces=[
+    [a,b,c],[a,c,d], // top
+    [down[2],down[1],down[0]],[down[3],down[2],down[0]], // bottom
+    [a,d,down[3]],[a,down[3],down[0]],
+    [d,c,down[2]],[d,down[2],down[3]],
+    [c,b,down[1]],[c,down[1],down[2]],
+    [b,a,down[0]],[b,down[0],down[1]],
+  ];
+  const geo=new THREE.BufferGeometry();
+  const vertices=faces.flat(1), positions=[],uv=[];
+  for(const p of vertices){
+    positions.push(...p);
+    // Same world-scale UVs as hipRoof: charcoal tiles match the main/porch roof.
+    uv.push(p[0]/160,p[2]/140);
+  }
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+  geo.computeVertexNormals();
+  const mesh=new THREE.Mesh(geo,material);
+  mesh.castShadow=mesh.receiveShadow=true;group.add(mesh);
+  return mesh;
+}
 function foliage(group,x,y,z,rx,ry,rz,i=0){
   const m=new THREE.Mesh(new THREE.SphereGeometry(1,12,8),i%3===0?M.leaf2:M.leaf);
   m.position.set(x,y,z);m.scale.set(rx,ry,rz);m.castShadow=true;m.receiveShadow=true;group.add(m);
@@ -354,9 +379,9 @@ const u=G.u;
 slab(u,[[6,6],[624,6],[624,1124],[314,1124],[314,1434],[6,1434]],UB,15,M.floorUp,[rect(8,202,480,690)]);
 slab(u,[[624,540],[714,540],[714,1434],[314,1434],[314,1124],[624,1124]],UB,15,M.tileOut);
 wall(u,'x',6,6,624,15,UB,[[61,121,'lv'],[369,549,'w3']]);
-wall(u,'z',624,6,1124,15,UB,[[286,406,'w3'],[546,726,'slide'],[884,1004,'w3']]);
+wall(u,'z',624,6,1124,15,UB,[[286,406,'w2'],[546,726,'slide'],[884,1004,'w2']]);
 wall(u,'z',6,6,1434,15,UB);
-wall(u,'x',1434,6,314,15,UB,[[156,276,'w3']]);
+wall(u,'x',1434,6,314,15,UB,[[156,276,'w2']]);
 wall(u,'x',474,6,624,10,UB,[[224,314,'door']]);
 wall(u,'z',176,6,276,10,UB);
 wall(u,'x',276,6,176,10,UB,[[80,170,'door']]);
@@ -386,20 +411,136 @@ hipRoof(G.roof,-50,680,-50,1490,UB+H+12,155,M.roof);
   branch(G.roof,[mid,apex,z-5],[x1,base,z-5],4,M.roofEdge);
   box(G.roof,x0-8,x1+8,base-7,base+1,z-9,z+20,M.roofEdge);
 })();
-// The lower tiled car-porch roof is a shallow sloping canopy with dark fascias.
+// ONE continuous charcoal-tiled roof body: the pitched front porch flows straight
+// into the narrow east-side pavement canopy. There is no second roof edge, fascia,
+// or overlapping slab at the porch/side junction, and the garden remains uncovered.
 (function(){
-  const z0=-560,z1=6,yHi=330,yLo=280,len=Math.hypot(z1-z0,yHi-yLo);
-  const m=new THREE.Mesh(new THREE.BoxGeometry(660,9,len),porchRoofMaterial);
-  m.position.set(312,(yHi+yLo)/2,(z0+z1)/2);m.rotation.x=-Math.atan2(yHi-yLo,z1-z0);
-  m.castShadow=m.receiveShadow=true;G.proof.add(m);
-  box(G.proof,-19,646,271,284,-567,-554,M.roofEdge);
-  box(G.proof,-19,-9,280,330,-557,8,M.roofEdge);
-  box(G.proof,635,645,280,330,-557,8,M.roofEdge);
-  box(G.proof,20,46,0,273,-555,-529,M.wall);
-  box(G.proof,578,604,0,273,-555,-529,M.wall);
-  // White concrete fascia and black under-roof beams, as in the photos.
-  box(G.proof,-10,630,257,267,-565,-540,M.concrete);
-  for(const z of [-485,-350,-215,-80])box(G.proof,25,602,262,269,z-2,z+2,M.pergola,false);
+  const zFront=-660, zPorchRear=10, zSideEnd=540;
+  const xLeft=-14, xRidge=319, xHouseEdge=624, xPavementEdge=730;
+  const yEave=276, yRidge=364;
+  const rightPitch=(yRidge-yEave)/(652-xRidge);
+  const roofY=x=>x<=xRidge
+    ? yEave+(x-xLeft)*(yRidge-yEave)/(xRidge-xLeft)
+    : yRidge-(x-xRidge)*rightPitch;
+  const thickness=9;
+  const top=[], bottom=[], fascia=[];
+  const appendTriangle=(into,a,b,c)=>{into.push(...a,...b,...c);};
+  function quad(x0,x1,z0,z1){
+    const a=[x0,roofY(x0),z0],b=[x1,roofY(x1),z0];
+    const c=[x1,roofY(x1),z1],d=[x0,roofY(x0),z1];
+    appendTriangle(top,a,c,b);appendTriangle(top,a,d,c);
+    const lower=([x,y,z])=>[x,y-thickness,z];
+    appendTriangle(bottom,lower(a),lower(b),lower(c));
+    appendTriangle(bottom,lower(a),lower(c),lower(d));
+  }
+  // A single L-shaped roof footprint: the porch over the driveway, plus ONLY
+  // the narrow x=624..730 strip beside (not above) the lawn.
+  quad(xLeft,xRidge,zFront,zPorchRear);
+  quad(xRidge,xHouseEdge,zFront,zPorchRear);
+  quad(xHouseEdge,xPavementEdge,zFront,zSideEnd);
+  const perimeter=[
+    [xLeft,zFront], [xRidge,zFront], [xPavementEdge,zFront],
+    [xPavementEdge,zSideEnd], [xHouseEdge,zSideEnd],
+    [xHouseEdge,zPorchRear], [xRidge,zPorchRear], [xLeft,zPorchRear]
+  ];
+  perimeter.forEach(([x0,z0],i)=>{
+    const [x1,z1]=perimeter[(i+1)%perimeter.length];
+    const a=[x0,roofY(x0),z0],b=[x1,roofY(x1),z1];
+    const c=[x1,roofY(x1)-thickness,z1],d=[x0,roofY(x0)-thickness,z0];
+    appendTriangle(fascia,a,b,c);appendTriangle(fascia,a,c,d);
+  });
+  // Exactly one tile-mapped mesh for the porch and the entire front side canopy.
+  // Mapping uses the same global scale as the main house roof.
+  function surface(vertices,material){
+    const geo=new THREE.BufferGeometry(),tex=[];
+    for(let i=0;i<vertices.length;i+=3)tex.push(vertices[i]/160,vertices[i+2]/140);
+    geo.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));
+    geo.setAttribute('uv',new THREE.Float32BufferAttribute(tex,2));
+    geo.computeVertexNormals();
+    const mesh=new THREE.Mesh(geo,material);
+    mesh.castShadow=mesh.receiveShadow=true;G.proof.add(mesh);
+  }
+  surface(top,roofMaterial);
+  surface(bottom,M.concrete);
+  const fasciaMaterial=M.roofEdge.clone();
+  fasciaMaterial.side=THREE.DoubleSide;
+  surface(fascia,fasciaMaterial);
+  // Trace the exposed eaves only. The inner porch-to-side seam deliberately
+  // has no trim, because the tile plane is physically continuous there.
+  const outline=[
+    [xLeft,zFront],[xRidge,zFront],[xPavementEdge,zFront],
+    [xPavementEdge,zSideEnd],[714,zSideEnd] // 714..730 joins transition below
+  ];
+  for(let i=0;i<outline.length-1;i++){
+    const [x0,z0]=outline[i],[x1,z1]=outline[i+1];
+    branch(G.proof,[x0,roofY(x0)-3,z0],[x1,roofY(x1)-3,z1],3.5,M.roofEdge);
+  }
+  // Rear side eave terminates at the corridor clearance line, while a slim
+  // transitional strip continues from x714..730 without cutting across it.
+  branch(G.proof,[xHouseEdge,roofY(xHouseEdge)-3,zSideEnd],
+                 [714,roofY(714)-3,zSideEnd],3.5,M.roofEdge);
+  branch(G.proof,[xHouseEdge,roofY(xHouseEdge)-3,zPorchRear],
+                 [xHouseEdge,roofY(xHouseEdge)-3,zSideEnd],3.5,M.roofEdge);
+  branch(G.proof,[xLeft,roofY(xLeft)-3,zPorchRear],
+                 [xRidge,roofY(xRidge)-3,zPorchRear],3.5,M.roofEdge);
+  branch(G.proof,[xRidge,roofY(xRidge)-3,zPorchRear],
+                 [xHouseEdge,roofY(xHouseEdge)-3,zPorchRear],3.5,M.roofEdge);
+  branch(G.proof,[xLeft,roofY(xLeft)-3,zFront],
+                 [xLeft,roofY(xLeft)-3,zPorchRear],3.5,M.roofEdge);
+  // The ridge runs front-to-back, pointing towards the upstairs toilet louvre.
+  branch(G.proof,[xRidge,yRidge+1,zFront],
+                 [xRidge,yRidge+1,zPorchRear],4.5,M.roofEdge);
+
+  // Keep the original front porch supports and under-roof beam.
+  box(G.proof,20,46,0,272,-555,-529,M.wall);
+  box(G.proof,578,604,0,272,-555,-529,M.wall);
+  box(G.proof,-6,644,264,273,-666,-646,M.concrete);
+
+  // Corridor-safe tapered link: at z=540 it shares the SAME exact edge with
+  // the single-piece porch/side canopy, then steps down to the rear side roof.
+  const T1=[714,roofY(714),zSideEnd],T2=[730,roofY(730),zSideEnd];
+  const T3=[730,231.866667,660],T4=[714,234,660];
+  roofQuad(G.proof,T1,T2,T3,T4,8,roofMaterial);
+  branch(G.proof,T2,T3,3.5,M.roofEdge);
+  branch(G.proof,T4,T1,3.5,M.roofEdge);
+  // Outer supports remain solely on the paving, never on the lawn.
+  for(const z of [-540,-100,330])box(G.proof,720,728,0,226,z-9,z+9,M.wall);
+})();
+
+// The rear side and back canopies retain their current geometry and height.
+(function(){
+  // Cover the previously exposed paving outside the ground-floor side sliding door
+  // (east wall x=624, door opening z=570..750). This piece is tucked BELOW the
+  // upper corridor: highest point y=242, under its underside at approx. y=250.
+  // It meets the already tiled side canopy at x=714 without projecting above
+  // the garden, and ends at z=840 where the main building widens.
+  const D1=[624,242,540], D2=[714,234,540];
+  const D3=[714,234,840], D4=[624,242,840];
+  roofQuad(G.proof,D1,D2,D3,D4,8,roofMaterial);
+  // Only the newly exposed front and wall-side eaves are trimmed; do not
+  // introduce a seam across the joint with the existing side roof.
+  branch(G.proof,D1,D2,3.5,M.roofEdge);
+  branch(G.proof,D4,D1,3.5,M.roofEdge);
+
+  // Rear side pavement roof: starts OUTSIDE the corridor so it does not overlap it.
+  const S1=[714,234,660], S2=[894,210,660], S3=[894,210,1434], S4=[714,234,1434];
+  roofQuad(G.proof,S1,S2,S3,S4,8,roofMaterial);
+  [[S1,S2],[S2,S3],[S3,S4],[S4,S1]].forEach(([p,q])=>branch(G.proof,p,q,4,M.roofEdge));
+
+  // Main back-yard roof strip.
+  const B1=[6,234,1434], B2=[714,234,1434], B3=[714,214,1542], B4=[6,214,1542];
+  roofQuad(G.proof,B1,B2,B3,B4,8,roofMaterial);
+  [[B1,B2],[B2,B3],[B3,B4],[B4,B1]].forEach(([p,q])=>branch(G.proof,p,q,4,M.roofEdge));
+
+  // Back-right corner piece ties the rear side roof into the back-yard roof cleanly.
+  const C1=[714,234,1434], C2=[894,210,1434], C3=[894,190,1542], C4=[714,214,1542];
+  roofQuad(G.proof,C1,C2,C3,C4,8,roofMaterial);
+  [[C1,C2],[C2,C3],[C3,C4],[C4,C1]].forEach(([p,q])=>branch(G.proof,p,q,4,M.roofEdge));
+
+  // Supports only on the outer boundary edges of the added roofs.
+  for(const z of [790,1240])box(G.proof,878,892,0,198,z-12,z+12,M.wall);
+  for(const x of [54,250,446,642])box(G.proof,x-12,x+12,0,210,1522,1536,M.wall);
+  box(G.proof,838-12,838+12,0,188,1522,1536,M.wall);
 })();
 
 /* ---------- site ---------- */
@@ -543,9 +684,9 @@ for(const [x,z,size] of [[795,-155,.7],[851,-50,.55],[827,110,.6],[812,390,.68],
   }
   windowTrim('x',-7,370,550,0,90,210);
   windowTrim('x',-7,369,549,UB,90,210);
-  // On the east flank, the same triple-panel frame style as downstairs.
-  windowTrim('z',635,286,406,UB,90,210);
-  windowTrim('z',635,884,1004,UB,90,210);
+  // Upper-floor side windows have two panels; only the front window has three.
+  windowTrim('z',635,286,406,UB,90,210,2);
+  windowTrim('z',635,884,1004,UB,90,210,2);
   // The small projecting dark-grey tile awning above the upstairs front window.
   (function(){
     const x0=345,x1=573,y0=UB+225;
