@@ -7,3 +7,8 @@ dist/
 
 # Textbook scans stay local (copyright)
 docs/*.pdf
+
+# Local agent skills and settings
+.agents/
+.claude/
+skills-lock.json
