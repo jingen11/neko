@@ -901,8 +901,10 @@ function devicesHtml(){
       </dl></article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
 }
 /* ---------- alarm page ---------- */
-// status comes live over SSE; the schedule and the log are fetched (on opening the page, after each change, and as the log grows)
-const alarm={status:null,periods:[],away:[],sessions:[],events:new Map(),open:null,loaded:false,error:null,busy:false};
+// status comes live over SSE; the schedule and the alarms are fetched (on opening the page, after each change, and as alarms come in)
+const alarm={status:null,periods:[],away:[],items:[],more:false,today:0,loaded:false,error:null,busy:false};
+const PAGE=50;
+const startOfToday=()=>{const d=new Date();d.setHours(0,0,0,0);return d.getTime();};
 async function api(path,opts={}){
   const r=await fetch('api/alarm'+path,{...opts,headers:opts.body?{'content-type':'application/json'}:{}});
   if(r.status===204)return null;
@@ -912,24 +914,29 @@ async function api(path,opts={}){
 }
 async function loadAlarm(){
   try{
-    const [a,sessions]=await Promise.all([api(''),api('/sessions?limit=10')]);
+    // keep as many as are already shown, so a refresh doesn't fold back pages the viewer loaded
+    const n=Math.min(200,Math.max(PAGE,alarm.items.length));
+    const [a,list]=await Promise.all([api(''),api(`/alarms?limit=${n}&since=${startOfToday()}`)]);
     const {periods,away,...status}=a;
-    Object.assign(alarm,{status,periods,away,sessions,loaded:true,error:null});
-    if(alarm.open===null&&sessions.length)alarm.open=sessions[0].id;
-    if(alarm.open!==null)alarm.events.set(alarm.open,await api(`/sessions/${alarm.open}/events`));
+    Object.assign(alarm,{status,periods,away,items:list.items,more:list.items.length===n,today:list.since,loaded:true,error:null});
   }catch(err){alarm.error=err.message;}
   render();
 }
 let logTimer=null;
 const refreshLogSoon=()=>{if(page!=='alarm'||!alarm.status?.armed||logTimer)return;logTimer=setTimeout(()=>{logTimer=null;loadAlarm();},2000);};
+async function moreAlarms(){
+  const last=alarm.items.at(-1); if(!last||alarm.busy)return;
+  alarm.busy=true; render();
+  try{const list=await api(`/alarms?limit=${PAGE}&beforeAt=${last.at}&beforeId=${last.id}`);alarm.items.push(...list.items);alarm.more=list.items.length===PAGE;}
+  catch(err){alarm.error=err.message;}
+  alarm.busy=false; render();
+}
 async function alarmDo(fn){
-  if(alarm.busy)return; alarm.busy=true; alarm.error=null; alarmDirty=false; render(); // acting on the page drops any half-filled form
+  if(alarm.busy)return; alarm.busy=true; alarm.error=null; render();
   try{await fn();}catch(err){alarm.error=err.message;}
   alarm.busy=false; await loadAlarm();
 }
 const shortDate=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'});
-const when=t=>{const d=new Date(t),today=new Date().toDateString()===d.toDateString();
-  return today?clockTime(t):`${d.toLocaleDateString(undefined,{day:'numeric',month:'short'})}, ${clockTime(t)}`;};
 const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 function alarmNote(s){
   const away=alarm.away.find(a=>a.from<=todayStr()&&todayStr()<=a.to);
@@ -946,73 +953,136 @@ function nextStart(){
   const sorted=alarm.periods.map(p=>p.start).sort();
   return sorted.find(t=>mins(t)>m)||sorted[0];
 }
-function eventLine(e){
+/** what an alarm was, in words, with an icon */
+function alarmLine(e){
   const dev=live.devices.get(e.device), where=ROOM_BY_ID[e.room]?.name||OPEN_BY_ID[e.opening]?.name||dev?.label||e.device;
-  if(e.kind==='availability')return {where,what:e.value?'Back online':'Went offline',hot:!e.value};
-  const ent=live.entities.get(e.entity)||{deviceClass:null,unit:e.unit};
-  const what=typeof e.value==='boolean'?formatValue({...ent,value:e.value}):`${e.name} ${formatValue({...ent,unit:e.unit,value:e.value})}`;
-  return {where,what,hot:e.value===true};
+  if(e.kind==='availability')return {where,what:'Sensor went offline',icon:'power'};
+  const dc=live.entities.get(e.entity)?.deviceClass||'';
+  if(OCC.includes(dc))return {where,what:'Someone detected',icon:'motion'};
+  if(dc==='vibration')return {where,what:'Vibration',icon:'security'};
+  if(['door','garage_door'].includes(dc)||OPEN_BY_ID[e.opening]?.kind==='door')return {where,what:'Door opened',icon:'door-open'};
+  if(['window','opening'].includes(dc)||e.opening)return {where,what:'Window opened',icon:'window-open'};
+  return {where,what:`${e.name||'Sensor'} on`,icon:'alarm'};
+}
+function dayLabel(t){
+  const d=new Date(t),today=new Date();today.setHours(0,0,0,0);
+  const diff=Math.round((today-new Date(d).setHours(0,0,0,0))/864e5);
+  return diff===0?'Today':diff===1?'Yesterday':d.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'short',year:d.getFullYear()===today.getFullYear()?undefined:'numeric'});
+}
+/* pickers: their state lives here, not in the DOM, so live redraws keep it */
+const pad2=n=>String(n).padStart(2,'0');
+const picker={start:'23:00',end:'07:00',open:null,from:null,to:null,month:todayStr().slice(0,7),note:''};
+const toMin=t=>+t.slice(0,2)*60+ +t.slice(3);
+const dayCount=(a,b)=>Math.round((new Date(b+'T00:00')-new Date(a+'T00:00'))/864e5)+1;
+/** the 24 hours as a bar: armed periods filled, the one being added dashed, now as a line */
+function dayBarHtml(){
+  const segs=(st,en)=>{const a=toMin(st),b=toMin(en);return a<b?[[a,b]]:[[a,1440],[0,b]];};
+  const seg=([a,b],cls)=>`<span class="db-seg ${cls}" style="left:${a/14.4}%;width:${(b-a)/14.4}%"></span>`;
+  const now=new Date(), m=now.getHours()*60+now.getMinutes();
+  const draft=picker.start!==picker.end?segs(picker.start,picker.end).map(x=>seg(x,'draft')).join(''):'';
+  return `<div class="daybar" role="img" aria-label="Armed hours: ${alarm.periods.map(p=>`${p.start} to ${p.end}`).join(', ')||'none'}">
+    <div class="db-track">${alarm.periods.flatMap(p=>segs(p.start,p.end)).map(x=>seg(x,'on')).join('')}${draft}<span class="db-now" style="left:${m/14.4}%"></span></div>
+    <div class="db-ticks mono"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div></div>`;
+}
+function timeFieldHtml(which,label){
+  return `<button class="tp-field${picker.open===which?' open':''}" data-act="tp-open" data-v="${which}" aria-expanded="${picker.open===which}">
+    <span class="label">${label}</span><strong class="mono">${picker[which]}</strong></button>`;
+}
+function timePickerHtml(which){
+  const [h,mm]=picker[which].split(':');
+  const hours=Array.from({length:24},(_,i)=>pad2(i)), mins=Array.from({length:12},(_,i)=>pad2(i*5));
+  const cell=(v,on,act)=>`<button class="tp-cell${on?' sel':''}" data-act="${act}" data-v="${v}" aria-pressed="${on}">${v}</button>`;
+  const fresh=picker.fresh; picker.fresh=false; // animate only as it opens, not on every tap inside it
+  return `<div class="tp-pop${fresh?' fresh':''}" role="group" aria-label="${which==='start'?'From':'To'} time">
+    <div class="tp-col"><span class="label">Hour</span><div class="tp-grid h">${hours.map(v=>cell(v,v===h,'tp-h')).join('')}</div></div>
+    <div class="tp-col"><span class="label">Minute</span><div class="tp-grid m">${mins.map(v=>cell(v,v===mm,'tp-m')).join('')}</div></div>
+    <button class="btn ghost tp-done" data-act="tp-close">Done</button></div>`;
+}
+function calendarHtml(){
+  const [y,m]=picker.month.split('-').map(Number), first=new Date(y,m-1,1), days=new Date(y,m,0).getDate();
+  const lead=(first.getDay()+6)%7, today=todayStr(), thisMonth=today.slice(0,7);
+  const ds=d=>`${y}-${pad2(m)}-${pad2(d)}`;
+  const isAway=d=>alarm.away.some(a=>a.from<=d&&d<=a.to);
+  const lo=picker.from, hi=picker.to||picker.from;
+  const cells=[...Array(lead).fill('<span></span>'),...Array.from({length:days},(_,i)=>{
+    const d=ds(i+1), past=d<today, inR=lo&&d>=lo&&d<=hi;
+    const cls=['cal-day',past&&'past',isAway(d)&&'away',d===today&&'today',inR&&'in',d===lo&&'lo',d===hi&&'hi'].filter(Boolean).join(' ');
+    return `<button class="${cls}" data-act="cal-day" data-v="${d}"${past?' disabled':''} aria-pressed="${!!inR}" aria-label="${shortDate(d)}${isAway(d)?', already away':''}"><span>${i+1}</span></button>`;
+  })];
+  const label=first.toLocaleDateString(undefined,{month:'long',year:'numeric'});
+  const wk=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  return `<div class="cal">
+    <div class="cal-head"><button class="tool cal-nav" data-act="cal-prev" aria-label="Previous month"${picker.month<=thisMonth?' disabled':''}>‹</button>
+      <strong>${label}</strong><button class="tool cal-nav" data-act="cal-next" aria-label="Next month">›</button></div>
+    <div class="cal-grid wk mono">${wk.map(w=>`<span>${w}</span>`).join('')}</div>
+    <div class="cal-grid">${cells.join('')}</div></div>`;
 }
 function alarmHtml(){
   const s=alarm.status;
-  if(!s)return `${headHtml('Alarm','Arms itself from your schedule')}<p class="empty">${alarm.error?esc(alarm.error):'Loading…'}</p>`;
-  const sess=s.session, evs=sess?alarm.events.get(sess.id):null;
+  if(!s)return `${headHtml('Alarm','What happened while armed')}<p class="empty">${alarm.error?esc(alarm.error):'Loading…'}</p>`;
+  const sess=s.session, dis=alarm.busy?' disabled':'';
+  const last=alarm.items[0];
+  let day=null;
+  const rows=alarm.items.map(e=>{const l=alarmLine(e),d=dayLabel(e.at),h=d!==day?`${day!==null?'</ul>':''}<h3 class="day">${esc(d)}</h3><ul class="rows alarms">`:'';day=d;
+    return `${h}<li class="row alarm-row"><span class="ico on">${IMG(l.icon)}</span>
+      <span><span class="name">${esc(l.what)}</span><span class="read">${esc(l.where)}</span></span>
+      <span class="time mono">${clockTime(e.at)}</span></li>`;}).join('')+(alarm.items.length?'</ul>':'');
+  return `${headHtml('Alarm','What happened while armed')}
+    <article class="panel-card">
+      <div class="card-head ${s.armed?'on':'off'}"><span class="ico ${s.armed?'on':''}">${IMG(s.armed?'alarm':'security')}</span>
+        <div><span class="label">Right now</span><strong class="big">${s.armed?'Armed':'Disarmed'}</strong><p class="note">${esc(alarmNote(s))}</p></div></div>
+      <div class="stats">
+        <div class="stat"><span class="label">Today</span><strong>${alarm.today??'—'}</strong></div>
+        <div class="stat"><span class="label">Last alarm</span><strong>${last?ago(last.at).replace(' ago',''):'—'}</strong></div>
+        <div class="stat"><span class="label">Armed for</span><strong>${sess?ago(sess.armedAt).replace(' ago','').replace('just now','now'):'—'}</strong></div>
+      </div>
+      <div class="actions">
+        <button class="btn ${s.armed?'':'primary'}" data-act="${s.armed?'disarm':'arm'}"${dis}>${s.armed?'Disarm now':'Arm now'}</button>
+        ${s.override?`<button class="btn ghost" data-act="follow"${dis}>Follow the schedule</button>`:''}
+        <button class="btn ghost" data-act="go-settings">Schedule</button>
+      </div>
+      ${alarm.error?`<p class="note err-note" role="alert">${esc(alarm.error)}</p>`:''}
+    </article>
+
+    <h2 class="section">Alarms</h2>
+    ${rows||'<p class="empty">No alarms yet. Someone detected, a door or window opening, or a sensor going offline while the alarm is armed shows up here.</p>'}
+    ${alarm.more?`<button class="btn ghost more" data-act="more"${dis}>Show older</button>`:''}`;
+}
+function settingsHtml(){
+  if(!alarm.status)return `${headHtml('Settings','When the alarm arms')}<p class="empty">${alarm.error?esc(alarm.error):'Loading…'}</p>`;
   const dis=alarm.busy?' disabled':'';
   const periods=alarm.periods.map((p,i)=>`<li class="mini"><span class="mono">${p.start} – ${p.end}${p.end<p.start?' <small class="label" style="display:inline">next day</small>':''}</span>
       <button class="btn ghost" data-act="del-period" data-i="${i}" aria-label="Remove ${p.start} to ${p.end}"${dis}>Remove</button></li>`).join('');
   const today=todayStr();
   const aways=alarm.away.map(a=>`<li class="mini"><span>${shortDate(a.from)}${a.to!==a.from?` – ${shortDate(a.to)}`:''}${a.note?` · ${esc(a.note)}`:''}${a.from<=today&&today<=a.to?' <b class="on">now</b>':a.to<today?' <b>past</b>':''}</span>
       <button class="btn ghost" data-act="del-away" data-id="${a.id}" aria-label="Remove away ${a.from} to ${a.to}"${dis}>Remove</button></li>`).join('');
-  const log=alarm.sessions.map(x=>{
-    const open=alarm.open===x.id, list=open?alarm.events.get(x.id):null;
-    const why={schedule:'Schedule',away:'Away',manual:'By hand'}[x.reason];
-    return `<li class="sess${open?' open':''}"><button class="mini sess-head" data-act="sess" data-id="${x.id}" aria-expanded="${open}">
-        <span>${when(x.armedAt)} → ${x.disarmedAt?when(x.disarmedAt):'<b class="on">now</b>'}</span><b>${why}</b></button>
-      ${open?(list?(list.length?`<ul class="minis log">${list.slice().reverse().map(e=>{const l=eventLine(e);
-        return `<li class="mini"><span><b class="mono">${clockTime(e.at)}</b> ${esc(l.where)}</span><b class="${l.hot?'on':''}">${esc(l.what)}</b></li>`;}).join('')}</ul>`
-        :'<p class="note">Nothing happened.</p>'):'<p class="note">Loading…</p>'):''}</li>`;}).join('');
-  return `${headHtml('Alarm','Arms itself from your schedule')}
-    <article class="panel-card">
-      <div class="card-head ${s.armed?'on':'off'}"><span class="ico ${s.armed?'on':''}">${IMG(s.armed?'alarm':'security')}</span>
-        <div><span class="label">Right now</span><strong class="big">${s.armed?'Armed':'Disarmed'}</strong><p class="note">${esc(alarmNote(s))}</p></div></div>
-      <div class="stats">
-        <div class="stat"><span class="label">Armed</span><strong>${sess?ago(sess.armedAt).replace(' ago',''):'—'}</strong></div>
-        <div class="stat"><span class="label">Logged</span><strong>${evs?evs.length:'—'}</strong></div>
-        <div class="stat"><span class="label">Periods</span><strong>${alarm.periods.length}</strong></div>
-      </div>
-      <div class="actions">
-        <button class="btn ${s.armed?'':'primary'}" data-act="${s.armed?'disarm':'arm'}"${dis}>${s.armed?'Disarm now':'Arm now'}</button>
-        ${s.override?`<button class="btn ghost" data-act="follow"${dis}>Follow the schedule</button>`:''}
-      </div>
-      ${alarm.error?`<p class="note err-note" role="alert">${esc(alarm.error)}</p>`:''}
-    </article>
-
+  return `${headHtml('Settings','When the alarm arms')}
+    ${alarm.error?`<p class="note err-note" role="alert">${esc(alarm.error)}</p>`:''}
     <h2 class="section">Armed every day</h2>
     <article class="panel-card">
+      ${dayBarHtml()}
       ${periods?`<ul class="minis">${periods}</ul>`:'<p class="note">No periods yet. The alarm only arms on away days or by hand.</p>'}
-      <form class="add" data-form="period">
-        <label><span class="label">From</span><input type="time" name="start" required></label>
-        <label><span class="label">To</span><input type="time" name="end" required></label>
-        <button class="btn primary"${dis}>Add</button>
-      </form>
-      <p class="note">An end earlier than the start runs past midnight. Times are the box's clock.</p>
+      <div class="tp-fields">
+        ${timeFieldHtml('start','From')}
+        <span class="tp-arrow" aria-hidden="true">→</span>
+        ${timeFieldHtml('end','To')}
+        <button class="btn primary" data-act="add-period"${dis||(picker.start===picker.end?' disabled':'')}>Add</button>
+      </div>
+      ${picker.open?timePickerHtml(picker.open):''}
+      <p class="note">${picker.start===picker.end?'Start and end must differ.':picker.end<picker.start?`Runs past midnight, ${picker.start} to ${picker.end} the next morning.`:`${picker.start} to ${picker.end}, every day.`} Times are the box's clock.</p>
     </article>
 
     <h2 class="section">Away from home</h2>
     <article class="panel-card">
       ${aways?`<ul class="minis">${aways}</ul>`:'<p class="note">No away days. On these days the alarm stays armed all day.</p>'}
-      <form class="add" data-form="away">
-        <label><span class="label">From</span><input type="date" name="from" min="${today}" required></label>
-        <label><span class="label">To</span><input type="date" name="to" min="${today}" required></label>
-        <label class="wide"><span class="label">Note</span><input type="text" name="note" maxlength="200" placeholder="Optional, e.g. trip"></label>
-        <button class="btn primary"${dis}>Add</button>
-      </form>
-    </article>
-
-    <h2 class="section">Log</h2>
-    ${log?`<ul class="minis sessions">${log}</ul>`:'<p class="empty">Nothing yet. Each time the alarm arms, what the sensors do is logged here.</p>'}`;
+      ${calendarHtml()}
+      <div class="cal-foot">
+        <p class="cal-sum">${picker.from?`<b>${shortDate(picker.from)}${picker.to&&picker.to!==picker.from?` – ${shortDate(picker.to)}`:''}</b> · ${dayCount(picker.from,picker.to||picker.from)} ${dayCount(picker.from,picker.to||picker.from)===1?'day':'days'}`:'Tap the first day you’re away, then the last.'}</p>
+        <input class="field" type="text" id="away-note" maxlength="200" placeholder="Note, e.g. trip" value="${esc(picker.note)}" aria-label="Note">
+        <button class="btn primary" data-act="add-away"${dis||(picker.from?'':' disabled')}>Add away days</button>
+      </div>
+    </article>`;
 }
-let alarmDirty=false; // a half-filled form: don't redraw over it
 function bindAlarm(){
   panel.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
     const a=b.dataset.act;
@@ -1021,37 +1091,38 @@ function bindAlarm(){
     else if(a==='del-period'){const list=alarm.periods.filter((_,i)=>i!==+b.dataset.i).map(({start,end})=>({start,end}));
       alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));}
     else if(a==='del-away')alarmDo(()=>api(`/away/${b.dataset.id}`,{method:'DELETE'}));
-    else if(a==='sess'){const id=+b.dataset.id;alarm.open=alarm.open===id?-1:id;
-      if(alarm.open===id&&!alarm.events.has(id))api(`/sessions/${id}/events`).then(ev=>{alarm.events.set(id,ev);render();});
-      render();}
+    else if(a==='tp-open'){picker.open=picker.open===b.dataset.v?null:b.dataset.v;picker.fresh=true;render();}
+    else if(a==='tp-close'){picker.open=null;render();}
+    else if(a==='tp-h'){picker[picker.open]=`${b.dataset.v}:${picker[picker.open].slice(3)}`;render();}
+    else if(a==='tp-m'){picker[picker.open]=`${picker[picker.open].slice(0,2)}:${b.dataset.v}`;picker.open=picker.open==='start'?'end':null;render();}
+    else if(a==='add-period'){if(picker.start===picker.end)return;
+      const list=[...alarm.periods.map(({start,end})=>({start,end})),{start:picker.start,end:picker.end}];picker.open=null;
+      alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));}
+    else if(a==='cal-prev'||a==='cal-next'){const [y,m]=picker.month.split('-').map(Number),d=new Date(y,m-1+(a==='cal-next'?1:-1),1);
+      picker.month=`${d.getFullYear()}-${pad2(d.getMonth()+1)}`;render();}
+    else if(a==='cal-day'){const d=b.dataset.v;
+      if(!picker.from||picker.to||d<picker.from){picker.from=d;picker.to=null;}else picker.to=d;render();}
+    else if(a==='add-away'){if(!picker.from)return;const body={from:picker.from,to:picker.to||picker.from,...(picker.note.trim()?{note:picker.note.trim()}:{})};
+      picker.from=picker.to=null;picker.note='';alarmDo(()=>api('/away',{method:'POST',body:JSON.stringify(body)}));}
+    else if(a==='more')moreAlarms();
+    else if(a==='go-settings')goPage('settings');
   });
-  panel.querySelectorAll('form[data-form]').forEach(f=>{
-    f.oninput=()=>{alarmDirty=true;};
-    f.onsubmit=e=>{
-      e.preventDefault(); const v=Object.fromEntries(new FormData(f));
-      if(f.dataset.form==='period'){
-        if(v.start===v.end){alarm.error='Start and end must differ';alarmDirty=false;render();return;}
-        const list=[...alarm.periods.map(({start,end})=>({start,end})),{start:v.start,end:v.end}];
-        alarmDirty=false; alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));
-      }else{
-        if(v.to<v.from){alarm.error='The last day is before the first';alarmDirty=false;render();return;}
-        alarmDirty=false; alarmDo(()=>api('/away',{method:'POST',body:JSON.stringify({from:v.from,to:v.to,...(v.note?{note:v.note}:{})})}));
-      }
-    };
-  });
+  const note=panel.querySelector('#away-note');
+  if(note)note.oninput=()=>{picker.note=note.value;};
 }
 function renderPanel(){
   // keep keyboard focus across live re-renders
   const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room):null;
-  if(page==='alarm'){
+  if(page==='alarm'||page==='settings'){
     // a form being filled in survives live updates; the page redraws only when its content changes
     const typing=f&&panel.contains(f)&&f.matches('input');
-    if(alarmDirty||typing)return;
-    const html=alarmHtml();
+    if(typing)return; // the note field: don't redraw under the caret (its text is kept in pick.note)
+    const html=page==='alarm'?alarmHtml():settingsHtml();
     if(panel._html===html)return;
     const top=panel.scrollTop; panel._html=html; panel.innerHTML=html; panel.scrollTop=top;
     bindAlarm();
-    if(f&&panel.contains(f)===false&&f.dataset?.act)panel.querySelector(`[data-act="${CSS.escape(f.dataset.act)}"]${f.dataset.id?`[data-id="${CSS.escape(f.dataset.id)}"]`:''}`)?.focus();
+    if(f?.dataset?.act){const q=[['act',f.dataset.act],['id',f.dataset.id],['v',f.dataset.v]].filter(([,v])=>v).map(([k,v])=>`[data-${k}="${CSS.escape(v)}"]`).join('');
+      panel.querySelector(q)?.focus();}
     return;
   }
   panel._html=null;
@@ -1193,12 +1264,13 @@ function zoom(f){
 document.getElementById('zoom-in').onclick=()=>zoom(.75);
 document.getElementById('zoom-out').onclick=()=>zoom(1/.75);
 document.getElementById('reset').onclick=()=>{sel=null;const p=PRESET[view];flyTo(p.pos,p.tgt);render();};
-document.querySelectorAll('button.rail-btn').forEach(b=>b.onclick=()=>{
-  page=b.dataset.page; alarmDirty=false;
-  if(page==='alarm')loadAlarm();
-  document.querySelectorAll('button.rail-btn').forEach(x=>x===b?x.setAttribute('aria-current','page'):x.removeAttribute('aria-current'));
+function goPage(p){
+  page=p;
+  if(p==='alarm'||p==='settings')loadAlarm();
+  document.querySelectorAll('button.rail-btn').forEach(x=>x.dataset.page===p?x.setAttribute('aria-current','page'):x.removeAttribute('aria-current'));
   panel.scrollTop=0; render();
-});
+}
+document.querySelectorAll('button.rail-btn').forEach(b=>b.onclick=()=>goPage(b.dataset.page));
 
 /* ---------- live connection ---------- */
 function apply(msg){
@@ -1208,10 +1280,10 @@ function apply(msg){
     live.devices=new Map(msg.devices.map(d=>[d.id,d]));
     live.entities=new Map(msg.entities.map(e=>[e.id,e]));
     msg.entities.forEach(e=>seen(e.at)); msg.devices.forEach(d=>seen(d.availableAt));
-    if(msg.alarm){alarm.status=msg.alarm;if(page==='alarm')loadAlarm();}
+    if(msg.alarm){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   } else if(msg.type==='device'){live.devices.set(msg.device.id,msg.device);seen(msg.device.availableAt);refreshLogSoon();}
   else if(msg.type==='entity'){live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);refreshLogSoon();}
-  else if(msg.type==='alarm'){alarm.status=msg.alarm;if(page==='alarm')loadAlarm();}
+  else if(msg.type==='alarm'){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   else if(msg.type==='broker')live.brokerUp=msg.connected;
   render();
 }

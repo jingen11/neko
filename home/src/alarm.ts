@@ -60,6 +60,7 @@ db.exec(`
     unit       TEXT
   );
   CREATE INDEX IF NOT EXISTS alarm_events_session ON alarm_events(session_id, at);
+  CREATE INDEX IF NOT EXISTS alarm_events_at ON alarm_events(at);
 `);
 
 // ---- types ----
@@ -198,6 +199,10 @@ const qArm = db.prepare("INSERT INTO alarm_sessions (armed_at, reason) VALUES (?
 const qDisarm = db.prepare("UPDATE alarm_sessions SET disarmed_at = ? WHERE disarmed_at IS NULL");
 const qSessions = db.prepare("SELECT * FROM alarm_sessions ORDER BY id DESC LIMIT ?");
 const qEvents = db.prepare("SELECT * FROM alarm_events WHERE session_id = ? ORDER BY at, id");
+/** an alarm: something turned on while armed (someone detected, a door or window opened, a vibration) or a board went offline */
+const TRIGGER = "((kind = 'entity' AND value = 'true') OR (kind = 'availability' AND value = 'false'))";
+const qAlarms = db.prepare(`SELECT * FROM alarm_events WHERE ${TRIGGER} AND (at < ? OR (at = ? AND id < ?)) ORDER BY at DESC, id DESC LIMIT ?`);
+const qAlarmsSince = db.prepare(`SELECT COUNT(*) AS n FROM alarm_events WHERE ${TRIGGER} AND at >= ?`);
 const qInsert = db.prepare(
   "INSERT INTO alarm_events (session_id, at, kind, device, entity, name, room, opening, value, unit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 );
@@ -266,6 +271,13 @@ export function clearOverride(): AlarmStatus {
 
 export const sessions = (limit = 50) => (qSessions.all(limit) as Row[]).map(toSession);
 export const events = (sessionId: number) => (qEvents.all(sessionId) as Row[]).map(toEvent);
+
+/** Alarms across every armed stretch, newest first. Page with `before` = the last one's {at, id}. */
+export function alarms(limit = 50, before?: { at: number; id: number }): AlarmEvent[] {
+  const at = before?.at ?? Number.MAX_SAFE_INTEGER;
+  return (qAlarms.all(at, at, before?.id ?? Number.MAX_SAFE_INTEGER, limit) as Row[]).map(toEvent);
+}
+export const alarmsSince = (t: number) => Number((qAlarmsSince.get(t) as Row).n);
 
 // ---- logging ----
 
