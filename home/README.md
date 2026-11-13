@@ -36,8 +36,8 @@ Door and window sensors (Zigbee contact or vibration sensors, once Zigbee2MQTT r
 
 | Floor | Doors | Window panels |
 |---|---|---|
-| Ground | `door-front`, `door-living` (sliding), `door-kitchen` (side) | `win-living-1..3`, `win-dining-1..3`, `win-work-1..2`, `win-wc-g`, `win-kitchen-1..3` |
-| Upper | `door-upper-living` (sliding), `door-bed1`, `door-bed2` (to the corridor) | `win-wc-m`, `win-master-front-1..3`, `win-master-side-1..2`, `win-bed1-1..2`, `win-bed2-1..2` |
+| Ground | `door-front`, `door-living-1..2` (sliding, one per panel), `door-kitchen` (side) | `win-living-1..3`, `win-dining-1..3`, `win-work-1..2`, `win-kitchen-1..3` |
+| Upper | `door-upper-living-1..2` (sliding, one per panel), `door-bed1`, `door-bed2` (to the corridor) | `win-master-front-1..3`, `win-master-side-1..2`, `win-bed1-1..2`, `win-bed2-1..2` |
 
 Panels count from the lower x (west) or lower z (front) end of the window. Each opening has a small sensor mark on its head: grey with no sensor, green closed, orange open (the whole opening is tinted then too, and gets a bubble).
 
@@ -60,6 +60,7 @@ Each armed stretch is a session (`alarm_sessions`). While one is open, every liv
 curl -X PUT  localhost:8090/api/alarm/periods -H 'content-type: application/json' -d '[{"start":"23:00","end":"07:00"}]'
 curl -X POST localhost:8090/api/alarm/away    -H 'content-type: application/json' -d '{"from":"2026-12-20","to":"2026-12-27","note":"trip"}'
 curl -X POST localhost:8090/api/alarm         -H 'content-type: application/json' -d '{"armed":true}'
+curl -X PATCH localhost:8090/api/devices/ground_floor_smart_plug -H 'content-type: application/json' -d '{"label":"Lobby plug","room":"lobby"}'
 ```
 
 ## Run
@@ -83,7 +84,10 @@ Live updates are server-sent events on `/api/events`; `flush_interval -1` sends 
 | Path | What |
 |---|---|
 | `GET /api/state` | floors, devices, entities with their current values |
-| `GET /api/events` | server-sent events: a `snapshot` (with `alarm`), then each `device` / `entity` / `broker` / `alarm` change |
+| `GET /api/events` | server-sent events: a `snapshot` (with `alarm`), then each `device` / `device-removed` / `entity` / `broker` / `alarm` change |
+| `GET /api/devices` | devices with their label, room or opening, and Zigbee IEEE address (`zigbee`, null for ESPHome) |
+| `GET /api/areas` | the room and opening ids a device can be put in, read from the 3D model in `public/app.js` |
+| `PATCH /api/devices/:id` | any of `label`, `room`, `opening` (`null` takes it out; a room clears the opening and back). Saved to `layout.json`, live straight away. Rename a device in Zigbee2MQTT or ESPHome, not here |
 | `GET /api/alarm` | armed or not, why (`schedule` / `away` / `manual`), any override, the open session, periods and away days |
 | `POST /api/alarm` | `{"armed": bool}`: manual arm or disarm |
 | `DELETE /api/alarm/override` | follow the schedule again |

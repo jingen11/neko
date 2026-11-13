@@ -101,15 +101,20 @@ function box(g,x0,x1,y0,y1,z0,z1,mat,shadow=true){
   g.add(m); return m;
 }
 const OP={w3:[90,210],w2:[90,210],wk:[105,210],lv:[175,208],slide:[0,210],steel:[0,212],door:[0,210]};
+// each window's glass is one mesh per panel, so a sensor on one panel moves only that panel (OPENINGS finds them here)
+const PANE_GLASS=new Map(), paneKey=(ax,c,base,s)=>`${ax}|${c}|${base}|${Math.round(s)}`;
 function fill(g,ax,c,s,e,base,y0,y1,type){
   if(type==='door'||type==='steel')return;
   const P=(ps,pe,a,b,d,mat)=>ax==='x'?box(g,ps,pe,base+a,base+b,c-d/2,c+d/2,mat,false):box(g,c-d/2,c+d/2,base+a,base+b,ps,pe,mat,false);
   const f=4;
   P(s,e,y0,y0+f,8,M.frame);P(s,e,y1-f,y1,8,M.frame);P(s,s+f,y0,y1,8,M.frame);P(e-f,e,y0,y1,8,M.frame);
   // toilet window: one high, top-hung frosted pane
-  if(type==='lv'){P(s+f,e-f,y0+f,y1-f,1.5,M.frost);return;}
-  P(s+f,e-f,y0+f,y1-f,1.5,type==='slide'?M.frost:M.glass);
+  if(type==='lv'){PANE_GLASS.set(paneKey(ax,c,base,s),P(s+f,e-f,y0+f,y1-f,1.5,M.frost));return;}
   const n=(type==='w3'||type==='wk')?3:2;
+  for(let i=0;i<n;i++){
+    const ps=s+(e-s)*i/n, pe=s+(e-s)*(i+1)/n;
+    PANE_GLASS.set(paneKey(ax,c,base,ps),P(i?ps+2:s+f,i<n-1?pe-2:e-f,y0+f,y1-f,1.5,type==='slide'?M.frost:M.glass));
+  }
   for(let i=1;i<n;i++){const x=s+(e-s)*i/n;P(x-2,x+2,y0,y1,7,M.frame);}
 }
 /* An axis-aligned wall on a centreline. ax 'x': runs along x at z=c; 'z': runs along z at x=c.
@@ -261,8 +266,44 @@ for(let j=0;j<5;j++)box(g,102+j*20.4,102+(j+1)*20.4,0,(11+j)*R,590,690,M.stair);
 // counters
 box(g,648,708,0,86,846,1206,M.counter); box(g,646,710,86,92,844,1206,M.top);
 box(g,400,708,0,86,1368,1428,M.counter); box(g,400,710,86,92,1366,1430,M.top);
-[[90,6,90,96,M.door],[270,6,270,96,M.door],[336,724,246,724,M.idoor],[134,1254,134,1329,'wet'],[396,1262,321,1262,'wet']]
+[[336,724,246,724,M.idoor],[134,1254,134,1329,'wet'],[396,1262,321,1262,'wet']]
   .forEach(([a,b,c,d,m])=>leaf(g,a,b,c,d,0,m));
+/* doors that swing with their sensor: each leaf turns on its hinge, closed in the wall line, open into the room.
+   Keyed by opening id (OPENINGS below); `outside` holds the street-side panels hidden while the door is open. */
+const SWING={};
+function swingLeaf(id,grp,hx,hz,len,openAngle,mat){
+  const pivot=new THREE.Group(); pivot.position.set(hx,0,hz); grp.add(pivot);
+  // the leaf runs along +x from the hinge (len<0: along -x), 4 cm thick, like leaf()
+  const m=new THREE.Mesh(new THREE.BoxGeometry(Math.abs(len),204,4),mat);
+  m.position.set(len/2,103,0); m.castShadow=true; m.receiveShadow=true; pivot.add(m);
+  const s=SWING[id]||(SWING[id]={leaves:[],outside:[],target:0,k:0});
+  s.leaves.push({pivot,openAngle});
+  return s;
+}
+// main timber double doors: hinges at x=90 and x=270 on the front wall (z=6), meeting at x=180, opening into the lobby (+z)
+swingLeaf('door-front',g,90,6,90,-Math.PI/2,M.door);
+swingLeaf('door-front',g,270,6,-90,Math.PI/2,M.door);
+const shaking=new Set(), noMotion=matchMedia('(prefers-reduced-motion: reduce)');
+function stepShakes(now){
+  shaking.forEach(o=>{
+    if(!o.pane)return;
+    const t=(now%1600)/1000, amp=noMotion.matches?0:t<.7?2.2*(1-t/.7):0; // cm
+    const w=Math.sin(now/1000*2*Math.PI*14)*amp, a=Math.sin(now/1000*2*Math.PI*9+1)*amp*.5;
+    // across the wall (its normal) and a little along it
+    o.pane.position.set(o.paneAt.x+(o.ax==='z'?w:a),o.paneAt.y,o.paneAt.z+(o.ax==='x'?w:a));
+  });
+}
+function setShaking(o,on){
+  if(!o.pane||on===shaking.has(o))return;
+  if(on)shaking.add(o); else{shaking.delete(o);o.pane.position.copy(o.paneAt);}
+}
+function stepSwings(){
+  Object.values(SWING).forEach(s=>{
+    s.k+=(s.target-s.k)*.12; if(Math.abs(s.target-s.k)<.002)s.k=s.target;
+    s.leaves.forEach(l=>{l.pivot.rotation.y=l.openAngle*s.k;});
+    s.outside.forEach(m=>{m.visible=s.k<.5;});
+  });
+}
 
 /* ---------- upper floor ---------- */
 const u=G.u;
@@ -541,21 +582,22 @@ for(const [x,z,size] of [[795,-155,.7],[851,-50,.55],[827,110,.6],[812,390,.68],
 (function(){
   const f=G.facade;
   // Main timber double doors: dark mahogany, curved routed detailing and chrome handles.
+  const outside=SWING['door-front'].outside;
   [[94,177],[181,266]].forEach(([l,r],i)=>{
-    box(f,l,r,1,210,-5,-2,M.door);
-    box(f,l+8,r-8,9,201,-7,-5,M.door);
-    box(f,l+17,r-17,31,33,-8,-6,M.woodGroove,false);
-    box(f,l+17,r-17,124,126,-8,-6,M.woodGroove,false);
+    outside.push(box(f,l,r,1,210,-5,-2,M.door));
+    outside.push(box(f,l+8,r-8,9,201,-7,-5,M.door));
+    outside.push(box(f,l+17,r-17,31,33,-8,-6,M.woodGroove,false));
+    outside.push(box(f,l+17,r-17,124,126,-8,-6,M.woodGroove,false));
     // Sweeping routed groove traced into each door panel.
     const pts=[];
     for(let j=0;j<=20;j++){
       const yy=26+j*8;const bend=16*Math.sin((yy-26)/160*Math.PI);
       pts.push(new THREE.Vector3((i?l+27:r-27)+(i?-bend:bend),yy,-8));
     }
-    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x352520}));f.add(line);
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x352520}));f.add(line);outside.push(line);
   });
-  box(f,168,172,99,116,-11,-8,M.inox,false);
-  box(f,179,183,99,116,-11,-8,M.inox,false);
+  outside.push(box(f,168,172,99,116,-11,-8,M.inox,false));
+  outside.push(box(f,179,183,99,116,-11,-8,M.inox,false));
   box(f,82,278,209,218,-8,9,M.concrete);
   // Exterior window trims make the glazing look like actual aluminium-frame windows.
   function windowTrim(ax,c,l,r,base,sill,head,panes=3){
@@ -643,23 +685,25 @@ ROOMS.forEach(r=>{
 const PANES={w3:3,wk:3,w2:2,lv:1};
 const OPENINGS=[],OPEN_BY_ID={};
 function door(id,name,room,lv,ax,c,s,e,d=19){OPENINGS.push({id,name,room,lv,kind:'door',ax,c,s,e,y0:0,y1:210,d});}
+// a two-panel glass sliding door: one opening per panel, each with its own (vibration) sensor and glass
+function slider(id,name,room,lv,ax,c,s,e,d=19){
+  for(let i=0;i<2;i++)OPENINGS.push({id:`${id}-${i+1}`,name:`${name}, panel ${i+1}`,room,lv,kind:'door',ax,c,s:s+(e-s)*i/2,e:s+(e-s)*(i+1)/2,y0:0,y1:210,d});
+}
 function panes(id,name,room,lv,ax,c,s,e,type,d=19){
   const n=PANES[type],[sill,head]=OP[type];
   for(let i=0;i<n;i++)OPENINGS.push({id:n>1?`${id}-${i+1}`:id,name:n>1?`${name}, panel ${i+1}`:name,room,lv,kind:'window',
     ax,c,s:s+(e-s)*i/n,e:s+(e-s)*(i+1)/n,y0:sill,y1:head,d});
 }
 door('door-front','Front door','lobby','g','x',6,90,270,32);
-door('door-living','Living sliding door','living','g','z',624,570,750);
+slider('door-living','Living sliding door','living','g','z',624,570,750);
 door('door-kitchen','Kitchen side door','kitchen','g','z',719,1236,1326,24);
 panes('win-living','Living front window','living','g','x',6,370,550,'w3');
 panes('win-dining','Dining window','dining','g','z',714,951,1131,'wk');
 panes('win-work','Work room window','work','g','x',1434,16,116,'w2');
-panes('win-wc-g','Ground toilet window','wc-g','g','x',1434,231,291,'lv');
 panes('win-kitchen','Kitchen window','kitchen','g','x',1434,414,594,'w3');
-door('door-upper-living','Upper living sliding door','uliving','u','z',624,546,726);
+slider('door-upper-living','Upper living sliding door','uliving','u','z',624,546,726);
 door('door-bed1','Bedroom 1 corridor door','bed1','u','x',1124,374,464,14);
 door('door-bed2','Bedroom 2 corridor door','bed2','u','z',314,1180,1270,14);
-panes('win-wc-m','Master toilet window','wc-m','u','x',6,61,121,'lv');
 panes('win-master-front','Master front window','master','u','x',6,369,549,'w3');
 panes('win-master-side','Master side window','master','u','z',624,286,406,'w2');
 panes('win-bed1','Bedroom 1 window','bed1','u','z',624,884,1004,'w2');
@@ -677,6 +721,9 @@ OPENINGS.forEach(o=>{
   o.tint.renderOrder=4;
   const mid=(o.s+o.e)/2,w=Math.min(16,(o.e-o.s)*.5);
   o.puck=place(new THREE.Mesh(unit,new THREE.MeshStandardMaterial({color:0xc5cbd3,roughness:.5})),mid-w/2,mid+w/2,o.y1-9,o.y1-2,o.d+6);
+  // window panels and sliding door panels have their own glass, which shakes with a vibration sensor
+  o.pane=PANE_GLASS.get(paneKey(o.ax,o.c,base,o.s))||null;
+  if(o.pane)o.paneAt=o.pane.position.clone();
   o.tagAt=new THREE.Vector3((o.ax==='x'?mid:o.c)/100,(base+o.y1+25)/100,(o.ax==='x'?o.c:mid)/100);
   OPEN_BY_ID[o.id]=o;
 });
@@ -687,6 +734,9 @@ OPENINGS.forEach(o=>{
 const live={connected:false,everConnected:false,brokerUp:false,devices:new Map(),entities:new Map()};
 const OCC=['occupancy','presence','motion'];
 const entitiesOf=id=>[...live.entities.values()].filter(e=>e.device===id);
+// the room card shows what a device is for; diagnostics (battery, link quality, ...) stay on the Devices tab,
+// except connectivity, so a device made only of diagnostics (the Zigbee2MQTT bridge) still shows if it's up
+const cardEntitiesOf=id=>entitiesOf(id).filter(e=>!e.diagnostic||e.deviceClass==='connectivity');
 const occupancyOf=id=>entitiesOf(id).find(e=>e.component==='binary_sensor'&&OCC.includes(e.deviceClass||''));
 const distanceOf=id=>entitiesOf(id).find(e=>e.component==='sensor'&&e.unit==='cm');
 const devicesIn=r=>[...live.devices.values()].filter(d=>d.room===r.id).sort((a,b)=>a.label.localeCompare(b.label));
@@ -793,14 +843,48 @@ function select(r){
 }
 // occupied rooms glow cat-orange on their floor; selection and hover use the accent
 const C_ACC=new THREE.Color(0x0a84ff),C_WARM=new THREE.Color(0xf39a38);
+/* a ceiling lamp in every room with a presence sensor: lit while someone is there.
+   Made on first use, so the light count (which recompiles materials) only changes when a board appears. */
+const C_BULB_ON=new THREE.Color(0xffd08a),C_BULB_OFF=new THREE.Color(0x9aa3ad);
+const lamps=[];
+function lampOf(r){
+  if(r.lamp)return r.lamp;
+  const base=r.lv==='u'?UB:0, x=r.c[0], z=r.c[1], y=base+H-30;
+  const bulb=new THREE.Mesh(new THREE.SphereGeometry(9,16,12),new THREE.MeshBasicMaterial({color:C_BULB_OFF.clone()}));
+  const halo=new THREE.Mesh(new THREE.SphereGeometry(22,16,12),new THREE.MeshBasicMaterial({color:0xffc27a,transparent:true,opacity:0,depthWrite:false}));
+  const cord=new THREE.Mesh(new THREE.CylinderGeometry(.8,.8,22,6),new THREE.MeshBasicMaterial({color:0x6b737c}));
+  bulb.position.set(x,y,z); halo.position.set(x,y,z); cord.position.set(x,y+15,z);
+  (r.lv==='u'?G.u:G.g).add(bulb,halo,cord); // hidden with its floor
+  // in the scene itself (metres), not a floor group: a hidden group would drop the light and recompile materials
+  const light=new THREE.PointLight(0xffc27a,0,Math.max(4,r.span/100*1.4),1.6);
+  light.position.set(x/100,(y-10)/100,z/100); scene.add(light);
+  r.lamp={r,bulb,halo,light,target:0,k:0}; lamps.push(r.lamp);
+  return r.lamp;
+}
+const LAMP_MAX=2.4;
+function stepLamps(){
+  lamps.forEach(l=>{
+    l.k+=(l.target-l.k)*.12; if(Math.abs(l.target-l.k)<.002)l.k=l.target;
+    l.light.intensity=LAMP_MAX*l.k;
+    l.bulb.material.color.copy(C_BULB_OFF).lerp(C_BULB_ON,l.k);
+    l.halo.material.opacity=.35*l.k;
+  });
+}
 function paint(){
   ROOMS.forEach(r=>{
     const on=roomState(r).st==='on';
+    if(devicesIn(r).some(d=>occupancyOf(d.id))){
+      // the ground-floor view hides the upper floor: its lamps would light the rooms below through the missing slab
+      lampOf(r).target=on&&!(view==='g'&&r.lv==='u')?1:0;
+    }
     r.mesh.material.color.copy(on?C_WARM:C_ACC);
     r.mesh.material.opacity=r===sel?(on?.5:.3):r===hover?(on?.42:.14):on?.32:0;
   });
   OPENINGS.forEach(o=>{
     const st=openingState(o).st;
+    // no sensor, offline or no reading yet: drawn closed
+    if(SWING[o.id])SWING[o.id].target=isAlert(st)?1:0;
+    setShaking(o,st==='shaking');
     o.tint.material.opacity=isAlert(st)?.55:0;
     o.puck.material.color.setHex(isAlert(st)?0xf39a38:st==='closed'?0x0f9d6a:st==='none'?0xc5cbd3:0x93a1b8);
   });
@@ -885,20 +969,79 @@ function openingsHtml(states,hot){
       <div class="stat"><span class="label">Offline</span><strong>${fitted.length?off.length:'—'}</strong></div>
     </div></article>`;
 }
+/* ---------- editing a device: label it, put it in a room or on a door/window ----------
+   (its name is Zigbee2MQTT's or ESPHome's: rename it there). The form's values live here, not in the DOM:
+   the Devices tab redraws on every live reading. */
+const edit={id:null,label:'',place:'',busy:false,error:null};
+const placeOf=d=>d.room?`room:${d.room}`:d.opening?`opening:${d.opening}`:'';
+function placeOptions(cur){
+  const opt=(v,t)=>`<option value="${v}"${v===cur?' selected':''}>${esc(t)}</option>`;
+  const lv=['g','u','out'];
+  return opt('','Not placed')
+    +lv.map(l=>`<optgroup label="Rooms · ${LVNAME[l]}">${ROOMS.filter(r=>r.lv===l).map(r=>opt('room:'+r.id,r.name)).join('')}</optgroup>`).join('')
+    +['g','u'].map(l=>`<optgroup label="Doors and windows · ${LVNAME[l]}">${OPENINGS.filter(o=>o.lv===l).map(o=>opt('opening:'+o.id,o.name)).join('')}</optgroup>`).join('');
+}
+function editHtml(d){
+  const dis=edit.busy?' disabled':'';
+  return `<form class="dev-edit" data-form="${esc(d.id)}">
+    <label><span class="label">Label on the dashboard</span>
+      <input class="field" id="ed-label" value="${esc(edit.label)}" maxlength="60" autocomplete="off"${dis}></label>
+    <label><span class="label">Place</span>
+      <select class="field" id="ed-place"${dis}>${placeOptions(edit.place)}</select>
+      <small class="note">Presence boards and plugs go in a room; door and window sensors on their door or window.</small></label>
+    ${edit.error?`<p class="note err-note" role="alert">${esc(edit.error)}</p>`:''}
+    <div class="actions"><button class="btn primary" type="submit"${dis}>${edit.busy?'Saving…':'Save'}</button>
+      <button class="btn ghost" type="button" data-act="edit-cancel"${dis}>Cancel</button></div>
+  </form>`;
+}
+async function saveDevice(d){
+  const body={}, [kind,where]=edit.place?edit.place.split(':'):[null,null];
+  const label=edit.label.trim();
+  if(label&&label!==d.label)body.label=label;
+  if(edit.place!==placeOf(d)){if(kind==='opening')body.opening=where;else body.room=where;}
+  if(!Object.keys(body).length){edit.id=null;render();return;}
+  edit.busy=true;edit.error=null;render();
+  try{
+    const r=await fetch(`api/devices/${encodeURIComponent(d.id)}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error&&j.message?j.message:j.error||`HTTP ${r.status}`);
+    edit.id=null;
+  }catch(err){edit.error=err.message;}
+  edit.busy=false;render();
+}
+function bindDevices(){
+  panel.querySelectorAll('[data-act="edit"]').forEach(b=>b.onclick=()=>{
+    const d=live.devices.get(b.dataset.dev); if(!d)return;
+    Object.assign(edit,{id:d.id,label:d.label,place:placeOf(d),busy:false,error:null}); render();
+    requestAnimationFrame(()=>panel.querySelector('#ed-label')?.focus());
+  });
+  panel.querySelectorAll('[data-act="edit-cancel"]').forEach(b=>b.onclick=()=>{edit.id=null;render();});
+  const form=panel.querySelector('.dev-edit'); if(!form)return;
+  const d=live.devices.get(form.dataset.form);
+  form.querySelector('#ed-label').addEventListener('input',e=>{edit.label=e.target.value;});
+  form.querySelector('#ed-place').addEventListener('change',e=>{edit.place=e.target.value;});
+  form.onsubmit=e=>{e.preventDefault(); if(d&&!edit.busy)saveDevice(d);};
+}
 function devicesHtml(){
-  const devs=[...live.devices.values()].sort((a,b)=>a.label.localeCompare(b.label));
+  // new, unplaced devices first, so a freshly paired one is easy to find
+  const isPlaced=d=>!!(ROOM_BY_ID[d.room]||OPEN_BY_ID[d.opening]);
+  const devs=[...live.devices.values()].sort((a,b)=>isPlaced(a)-isPlaced(b)||a.label.localeCompare(b.label));
+  if(edit.id&&!live.devices.has(edit.id)&&!edit.busy)edit.id=null; // renamed in Zigbee2MQTT, or gone
   return `${headHtml('Devices','Found through MQTT discovery')}
-    ${devs.length?devs.map(d=>{const room=ROOM_BY_ID[d.room],op=OPEN_BY_ID[d.opening];return `<article class="panel-card">
+    ${devs.length?devs.map(d=>{const room=ROOM_BY_ID[d.room],op=OPEN_BY_ID[d.opening],editing=edit.id===d.id;return `<article class="panel-card">
       <div class="card-head"><span class="ico ${d.available===false?'off':''}">${(op?openingIcon(op,openingState(op).st):IMG(occupancyOf(d.id)?'motion':'devices'))}</span>
-        <div style="flex:1;min-width:0"><strong class="name" style="font:600 16px var(--f-head)">${esc(d.label)}</strong><span class="label">${esc(d.id)}</span></div>
+        <div class="dev-title"><strong class="name" title="${esc(d.label)}">${esc(d.label)}</strong><span class="label" title="${esc(d.id)}">${esc(d.id)}</span></div>
         <span class="status ${d.available===false?'down':d.available?'up':''}">${d.available===false?'Offline':d.available?'Online':'Unknown'}</span></div>
+      ${editing?editHtml(d):''}
       <dl class="facts">
-        <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed (layout.json)'}</dd>
-        ${entitiesOf(d.id).map(e=>`<dt>${esc(e.name)}</dt><dd>${esc(formatValue(e))}${e.at?`, ${ago(e.at)}`:''}</dd>`).join('')}
+        <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed yet'}</dd>
+        ${[false,true].map(diag=>{const es=entitiesOf(d.id).filter(e=>!!e.diagnostic===diag);
+          return (diag&&es.length?'<dt class="facts-group">Diagnostics</dt>':'')+es.map(e=>`<dt>${esc(e.name)}</dt><dd>${esc(formatValue(e))}${e.at?`, ${ago(e.at)}`:''}</dd>`).join('');}).join('')}
         <dt>IP</dt><dd>${esc(d.ip||'—')}</dd>
         <dt>Board</dt><dd>${esc([d.model,d.firmware&&'ESPHome '+d.firmware].filter(Boolean).join(' · ')||'—')}</dd>
         <dt>${d.available===false?'Offline':'Online'} since</dt><dd>${d.availableAt?`${clockTime(d.availableAt)}, ${ago(d.availableAt)}`:'—'}</dd>
-      </dl></article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
+      </dl>
+      ${editing?'':`<div class="actions"><button class="btn ${isPlaced(d)?'':'primary'}" data-act="edit" data-dev="${esc(d.id)}" aria-label="${isPlaced(d)?'Edit':'Place'} ${esc(d.label)}">${isPlaced(d)?'Edit label or place':'Place this device'}</button></div>`}</article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
 }
 /* ---------- alarm page ---------- */
 // status comes live over SSE; the schedule and the alarms are fetched (on opening the page, after each change, and as alarms come in)
@@ -1126,9 +1269,12 @@ function renderPanel(){
     return;
   }
   panel._html=null;
+  // the device form: don't redraw under the caret or an open dropdown (its values are kept in `edit`)
+  if(page==='devices'&&edit.id&&!edit.busy&&f&&panel.contains(f)&&f.matches('input,select'))return;
   const top=panel.scrollTop;
   panel.innerHTML=page==='devices'?devicesHtml():overviewHtml();
   panel.scrollTop=top;
+  if(page==='devices')bindDevices();
   panel.querySelectorAll('.row').forEach(b=>b.onclick=()=>{const r=ROOM_BY_ID[b.dataset.id];select(r===sel?null:r);});
   panel.querySelectorAll('.mini[data-room]').forEach(b=>b.onclick=()=>select(ROOM_BY_ID[b.dataset.room]));
   if(fid)panel.querySelector(`[data-id="${CSS.escape(fid)}"],[data-room="${CSS.escape(fid)}"]`)?.focus();
@@ -1141,7 +1287,7 @@ function renderCard(){
   const r=sel,ds=devicesIn(r),s=roomState(r);
   const cells=ds.flatMap(d=>{
     const off=d.available===false;
-    return entitiesOf(d.id).map(e=>{
+    return cardEntitiesOf(d.id).map(e=>{
       // distance only updates while someone is in range, so once the room is clear its last value is stale
       const stale=e===distanceOf(d.id)&&occupancyOf(d.id)?.value===false;
       const isOcc=OCC.includes(e.deviceClass||'');
@@ -1150,7 +1296,7 @@ function renderCard(){
       return `<div class="cell"><span class="label">${isOcc?'Presence':esc(e.name)}</span><strong class="${cls}">${esc(v)}</strong></div>`;
     });
   }).join('');
-  const changed=s.at||Math.max(0,...ds.flatMap(d=>entitiesOf(d.id).map(e=>e.at||0)))||null;
+  const changed=s.at||Math.max(0,...ds.flatMap(d=>cardEntitiesOf(d.id).map(e=>e.at||0)))||null;
   const ops=OPENINGS.filter(o=>o.room===r.id);
   // the header (with the close button) is rebuilt only when the room changes: live readings
   // arrive several times a second, and replacing the button mid-click would swallow the click
@@ -1200,10 +1346,10 @@ function buildTags(){
       sensor?`<span class="bubble">${roomIcon(r)}<span><b>${WORD[s.st]}${s.st==='on'&&typeof s.dist==='number'?' · '+metres(s.dist):''}</b><small>${esc(r.name)}</small></span></span><span class="pin"></span>`
         :`<span class="bubble">${roomIcon(r)}<span>${esc(r.name)}</span></span>`);
   });
-  // an open door or window gets its own bubble, on its floor and from the whole-house view
-  OPENINGS.filter(o=>(o.lv===view||view==='out')&&isAlert(openingState(o).st)).forEach(o=>{
+  // every door or window with a sensor gets its own bubble, open or closed, on its floor and from the whole-house view
+  OPENINGS.filter(o=>(o.lv===view||view==='out')&&openingState(o).st!=='none').forEach(o=>{
     const st=openingState(o).st;
-    addTag('op:'+o.id,ROOM_BY_ID[o.room],o.tagAt,' on',`${o.name}: ${OWORD[st]}`,
+    addTag('op:'+o.id,ROOM_BY_ID[o.room],o.tagAt,isAlert(st)?' on':st==='closed'?' shut':' off',`${o.name}: ${OWORD[st]}`,
       `<span class="bubble">${openingIcon(o,st)}<span><b>${OWORD[st]}</b><small>${esc(o.name)}</small></span></span><span class="pin"></span>`);
   });
   tagEls.forEach((el,k)=>{if(!tagSeen.has(k)){el.remove();tagEls.delete(k);}});
@@ -1282,6 +1428,7 @@ function apply(msg){
     msg.entities.forEach(e=>seen(e.at)); msg.devices.forEach(d=>seen(d.availableAt));
     if(msg.alarm){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   } else if(msg.type==='device'){live.devices.set(msg.device.id,msg.device);seen(msg.device.availableAt);refreshLogSoon();}
+  else if(msg.type==='device-removed'){live.devices.delete(msg.id);refreshLogSoon();}
   else if(msg.type==='entity'){live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);refreshLogSoon();}
   else if(msg.type==='alarm'){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   else if(msg.type==='broker')live.brokerUp=msg.connected;
@@ -1313,7 +1460,7 @@ function loop(now){
     camera.position.lerpVectors(tween.p0,tween.p1,e); controls.target.lerpVectors(tween.q0,tween.q1,e);
     if(k>=1)tween=null;
   }
-  controls.update(); renderer.render(scene,camera);
+  stepLamps(); stepSwings(); stepShakes(now); controls.update(); renderer.render(scene,camera);
   placeTags(stage.clientWidth,stage.clientHeight);
   // the plan's north is -z: on screen it sits at the camera's azimuth, clockwise from up
   compass.style.transform=`rotate(${controls.getAzimuthalAngle()}rad)`;

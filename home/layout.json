@@ -1,6 +1,11 @@
 {
   "devices": {
     "presence-gf": { "label": "Ground floor sensor", "room": "living" },
-    "presence-1f": { "label": "Upper floor sensor", "room": "uliving" }
+    "presence-1f": { "label": "Upper floor sensor", "room": "uliving" },
+    "Zigbee2MQTT Bridge": { "label": "Zigbee coordinator", "room": "living" },
+    "front_door": { "label": "Front door sensor", "opening": "door-front" },
+    "1_floor_smart_plug": { "label": "Upper living smart plug", "room": "uliving" },
+    "g_floor_smart_plug": { "label": "Ground floor smart plug", "room": "lobby" },
+    "g_floor_living_window_1": { "label": "Ground floor living window panel 1", "opening": "win-living-1" }
   }
 }

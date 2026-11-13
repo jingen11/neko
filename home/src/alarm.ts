@@ -289,6 +289,9 @@ function record(u: Update) {
   if (u.type === "entity") {
     const e = u.entity;
     if (e.at === null) return; // retained replay, not a live change
+    // diagnostic numbers (battery %, voltage, link quality) change on almost every message: not worth logging.
+    // Diagnostic on/off readings stay: battery_low, or the bridge's restart_required, turning on is an alarm.
+    if (e.diagnostic && e.component !== "binary_sensor") return;
     const place = layout.devices[e.device];
     qInsert.run(current.id, e.at, "entity", e.device, e.id, e.name, place?.room ?? null, place?.opening ?? null, JSON.stringify(e.value), e.unit);
   } else if (u.type === "device") {

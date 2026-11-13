@@ -1,8 +1,9 @@
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
-import { snapshot, start, subscribe } from "./broker.ts";
+import { device, place, snapshot, start, subscribe } from "./broker.ts";
+import { isOpening, isRoom, openings, rooms } from "./areas.ts";
 import { addAway, alarms, alarmsSince, aways, clearOverride, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
-import { config } from "./config.ts";
+import { config, layout, saveLayout } from "./config.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -32,6 +33,68 @@ app.get("/api/events", (req, reply) => {
     clearInterval(ping);
   });
 });
+
+/** Where a device can go: room ids for presence boards and plugs, opening ids (doors, window panes) for contact/vibration sensors. */
+app.get("/api/areas", async () => ({ rooms, openings }));
+
+/** Every device found through discovery, with its label and place. */
+app.get("/api/devices", async () => snapshot().devices);
+
+/**
+ * Change where a device is shown: any of
+ *   label    what the dashboard calls it
+ *   room     a room id from /api/areas, or null to take it out (clears opening)
+ *   opening  a door or window id from /api/areas, or null (clears room)
+ * e.g. PATCH /api/devices/lobby_plug {"label":"Lobby plug","room":"lobby"}
+ * Saved to layout.json; the page updates straight away. The device's name (its id) belongs to Zigbee2MQTT or ESPHome:
+ * rename it there; a Zigbee2MQTT rename carries its readings and its place in layout.json over to the new name.
+ */
+app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null; opening?: string | null } }>(
+  "/api/devices/:id",
+  {
+    schema: {
+      body: {
+        type: "object",
+        minProperties: 1,
+        additionalProperties: false,
+        properties: {
+          label: { type: "string", minLength: 1, maxLength: 60 },
+          room: { type: ["string", "null"] },
+          opening: { type: ["string", "null"] },
+        },
+      },
+    },
+  },
+  async (req, reply) => {
+    const id = req.params.id;
+    const b = req.body;
+    const d = device(id);
+    if (!d) return reply.code(404).send({ error: `no device "${id}" (see GET /api/devices)` });
+    // unknown fields (e.g. "name": renames happen in Zigbee2MQTT) are stripped by validation, which can leave nothing
+    if (b.label === undefined && b.room === undefined && b.opening === undefined)
+      return reply.code(400).send({ error: "nothing to change: send label, room or opening (rename the device in Zigbee2MQTT)" });
+    if (b.room && b.opening) return reply.code(400).send({ error: "a device goes in a room or on an opening, not both" });
+    if (b.room && !isRoom(b.room)) return reply.code(400).send({ error: `unknown room "${b.room}" (see GET /api/areas)` });
+    if (b.opening && !isOpening(b.opening)) return reply.code(400).send({ error: `unknown opening "${b.opening}" (see GET /api/areas)` });
+
+    const p = { ...(layout.devices[id] ?? { label: device(id)?.label ?? id }) };
+    if (b.label !== undefined) p.label = b.label;
+    if (b.room !== undefined) {
+      if (b.room) p.room = b.room;
+      else delete p.room;
+      if (b.room) delete p.opening;
+    }
+    if (b.opening !== undefined) {
+      if (b.opening) p.opening = b.opening;
+      else delete p.opening;
+      if (b.opening) delete p.room;
+    }
+    layout.devices[id] = p;
+    saveLayout();
+    place(id);
+    return device(id);
+  },
+);
 
 /** The alarm now, plus its schedule. */
 app.get("/api/alarm", async () => ({ ...status(), periods: periods(), away: aways() }));
