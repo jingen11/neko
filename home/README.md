@@ -36,8 +36,8 @@ Door and window sensors (Zigbee contact or vibration sensors, once Zigbee2MQTT r
 
 | Floor | Doors | Window panels |
 |---|---|---|
-| Ground | `door-front`, `door-living` (sliding), `door-kitchen` (side) | `win-living-1..3`, `win-dining-1..3`, `win-work-1..2`, `win-wc-g`, `win-kitchen-1..3` |
-| Upper | `door-upper-living` (sliding), `door-bed1`, `door-bed2` (to the corridor) | `win-wc-m`, `win-master-front-1..3`, `win-master-side-1..2`, `win-bed1-1..2`, `win-bed2-1..2` |
+| Ground | `door-front`, `door-living-1..2` (sliding, one per panel), `door-kitchen` (side) | `win-living-1..3`, `win-dining-1..3`, `win-work-1..2`, `win-kitchen-1..3` |
+| Upper | `door-upper-living-1..2` (sliding, one per panel), `door-bed1`, `door-bed2` (to the corridor) | `win-master-front-1..3`, `win-master-side-1..2`, `win-bed1-1..2`, `win-bed2-1..2` |
 
 Panels count from the lower x (west) or lower z (front) end of the window. Each opening has a small sensor mark on its head: grey with no sensor, green closed, orange open (the whole opening is tinted then too, and gets a bubble).
 

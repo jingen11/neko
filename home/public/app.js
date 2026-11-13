@@ -685,23 +685,25 @@ ROOMS.forEach(r=>{
 const PANES={w3:3,wk:3,w2:2,lv:1};
 const OPENINGS=[],OPEN_BY_ID={};
 function door(id,name,room,lv,ax,c,s,e,d=19){OPENINGS.push({id,name,room,lv,kind:'door',ax,c,s,e,y0:0,y1:210,d});}
+// a two-panel glass sliding door: one opening per panel, each with its own (vibration) sensor and glass
+function slider(id,name,room,lv,ax,c,s,e,d=19){
+  for(let i=0;i<2;i++)OPENINGS.push({id:`${id}-${i+1}`,name:`${name}, panel ${i+1}`,room,lv,kind:'door',ax,c,s:s+(e-s)*i/2,e:s+(e-s)*(i+1)/2,y0:0,y1:210,d});
+}
 function panes(id,name,room,lv,ax,c,s,e,type,d=19){
   const n=PANES[type],[sill,head]=OP[type];
   for(let i=0;i<n;i++)OPENINGS.push({id:n>1?`${id}-${i+1}`:id,name:n>1?`${name}, panel ${i+1}`:name,room,lv,kind:'window',
     ax,c,s:s+(e-s)*i/n,e:s+(e-s)*(i+1)/n,y0:sill,y1:head,d});
 }
 door('door-front','Front door','lobby','g','x',6,90,270,32);
-door('door-living','Living sliding door','living','g','z',624,570,750);
+slider('door-living','Living sliding door','living','g','z',624,570,750);
 door('door-kitchen','Kitchen side door','kitchen','g','z',719,1236,1326,24);
 panes('win-living','Living front window','living','g','x',6,370,550,'w3');
 panes('win-dining','Dining window','dining','g','z',714,951,1131,'wk');
 panes('win-work','Work room window','work','g','x',1434,16,116,'w2');
-panes('win-wc-g','Ground toilet window','wc-g','g','x',1434,231,291,'lv');
 panes('win-kitchen','Kitchen window','kitchen','g','x',1434,414,594,'w3');
-door('door-upper-living','Upper living sliding door','uliving','u','z',624,546,726);
+slider('door-upper-living','Upper living sliding door','uliving','u','z',624,546,726);
 door('door-bed1','Bedroom 1 corridor door','bed1','u','x',1124,374,464,14);
 door('door-bed2','Bedroom 2 corridor door','bed2','u','z',314,1180,1270,14);
-panes('win-wc-m','Master toilet window','wc-m','u','x',6,61,121,'lv');
 panes('win-master-front','Master front window','master','u','x',6,369,549,'w3');
 panes('win-master-side','Master side window','master','u','z',624,286,406,'w2');
 panes('win-bed1','Bedroom 1 window','bed1','u','z',624,884,1004,'w2');
@@ -719,10 +721,9 @@ OPENINGS.forEach(o=>{
   o.tint.renderOrder=4;
   const mid=(o.s+o.e)/2,w=Math.min(16,(o.e-o.s)*.5);
   o.puck=place(new THREE.Mesh(unit,new THREE.MeshStandardMaterial({color:0xc5cbd3,roughness:.5})),mid-w/2,mid+w/2,o.y1-9,o.y1-2,o.d+6);
-  if(o.kind==='window'){
-    o.pane=PANE_GLASS.get(paneKey(o.ax,o.c,base,o.s))||null;
-    if(o.pane)o.paneAt=o.pane.position.clone();
-  }
+  // window panels and sliding door panels have their own glass, which shakes with a vibration sensor
+  o.pane=PANE_GLASS.get(paneKey(o.ax,o.c,base,o.s))||null;
+  if(o.pane)o.paneAt=o.pane.position.clone();
   o.tagAt=new THREE.Vector3((o.ax==='x'?mid:o.c)/100,(base+o.y1+25)/100,(o.ax==='x'?o.c:mid)/100);
   OPEN_BY_ID[o.id]=o;
 });

@@ -4,7 +4,7 @@ import { config } from "./config.ts";
 
 /**
  * The rooms, doors and windows a device can be put in, read from the 3D model in public/app.js
- * (ROOMS, door(...), panes(...)) so the page stays the one place they are defined.
+ * (ROOMS, door(...), slider(...), panes(...)) so the page stays the one place they are defined.
  */
 export interface Area {
   id: string;
@@ -25,6 +25,10 @@ const panesPer = Object.fromEntries(
 );
 export const openings: Area[] = [
   ...[...src.matchAll(/^door\('([\w-]+)','([^']+)','[\w-]+','(\w+)'/gm)].map((m) => ({ id: m[1], name: m[2], floor: m[3] as Area["floor"] })),
+  // a sliding door is two panels: door-living-1, door-living-2
+  ...[...src.matchAll(/^slider\('([\w-]+)','([^']+)','[\w-]+','(\w+)'/gm)].flatMap((m) =>
+    [1, 2].map((i) => ({ id: `${m[1]}-${i}`, name: `${m[2]}, panel ${i}`, floor: m[3] as Area["floor"] })),
+  ),
   ...[...src.matchAll(/^panes\('([\w-]+)','([^']+)','[\w-]+','(\w+)',[^\n]*'(\w+)'(?:,\d+)?\);/gm)].flatMap((m) => {
     const n = panesPer[m[4]] ?? 1;
     return Array.from({ length: n }, (_, i) => ({
