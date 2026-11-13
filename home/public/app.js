@@ -101,15 +101,20 @@ function box(g,x0,x1,y0,y1,z0,z1,mat,shadow=true){
   g.add(m); return m;
 }
 const OP={w3:[90,210],w2:[90,210],wk:[105,210],lv:[175,208],slide:[0,210],steel:[0,212],door:[0,210]};
+// each window's glass is one mesh per panel, so a sensor on one panel moves only that panel (OPENINGS finds them here)
+const PANE_GLASS=new Map(), paneKey=(ax,c,base,s)=>`${ax}|${c}|${base}|${Math.round(s)}`;
 function fill(g,ax,c,s,e,base,y0,y1,type){
   if(type==='door'||type==='steel')return;
   const P=(ps,pe,a,b,d,mat)=>ax==='x'?box(g,ps,pe,base+a,base+b,c-d/2,c+d/2,mat,false):box(g,c-d/2,c+d/2,base+a,base+b,ps,pe,mat,false);
   const f=4;
   P(s,e,y0,y0+f,8,M.frame);P(s,e,y1-f,y1,8,M.frame);P(s,s+f,y0,y1,8,M.frame);P(e-f,e,y0,y1,8,M.frame);
   // toilet window: one high, top-hung frosted pane
-  if(type==='lv'){P(s+f,e-f,y0+f,y1-f,1.5,M.frost);return;}
-  P(s+f,e-f,y0+f,y1-f,1.5,type==='slide'?M.frost:M.glass);
+  if(type==='lv'){PANE_GLASS.set(paneKey(ax,c,base,s),P(s+f,e-f,y0+f,y1-f,1.5,M.frost));return;}
   const n=(type==='w3'||type==='wk')?3:2;
+  for(let i=0;i<n;i++){
+    const ps=s+(e-s)*i/n, pe=s+(e-s)*(i+1)/n;
+    PANE_GLASS.set(paneKey(ax,c,base,ps),P(i?ps+2:s+f,i<n-1?pe-2:e-f,y0+f,y1-f,1.5,type==='slide'?M.frost:M.glass));
+  }
   for(let i=1;i<n;i++){const x=s+(e-s)*i/n;P(x-2,x+2,y0,y1,7,M.frame);}
 }
 /* An axis-aligned wall on a centreline. ax 'x': runs along x at z=c; 'z': runs along z at x=c.
@@ -278,6 +283,20 @@ function swingLeaf(id,grp,hx,hz,len,openAngle,mat){
 // main timber double doors: hinges at x=90 and x=270 on the front wall (z=6), meeting at x=180, opening into the lobby (+z)
 swingLeaf('door-front',g,90,6,90,-Math.PI/2,M.door);
 swingLeaf('door-front',g,270,6,-90,Math.PI/2,M.door);
+const shaking=new Set(), noMotion=matchMedia('(prefers-reduced-motion: reduce)');
+function stepShakes(now){
+  shaking.forEach(o=>{
+    if(!o.pane)return;
+    const t=(now%1600)/1000, amp=noMotion.matches?0:t<.7?2.2*(1-t/.7):0; // cm
+    const w=Math.sin(now/1000*2*Math.PI*14)*amp, a=Math.sin(now/1000*2*Math.PI*9+1)*amp*.5;
+    // across the wall (its normal) and a little along it
+    o.pane.position.set(o.paneAt.x+(o.ax==='z'?w:a),o.paneAt.y,o.paneAt.z+(o.ax==='x'?w:a));
+  });
+}
+function setShaking(o,on){
+  if(!o.pane||on===shaking.has(o))return;
+  if(on)shaking.add(o); else{shaking.delete(o);o.pane.position.copy(o.paneAt);}
+}
 function stepSwings(){
   Object.values(SWING).forEach(s=>{
     s.k+=(s.target-s.k)*.12; if(Math.abs(s.target-s.k)<.002)s.k=s.target;
@@ -700,6 +719,10 @@ OPENINGS.forEach(o=>{
   o.tint.renderOrder=4;
   const mid=(o.s+o.e)/2,w=Math.min(16,(o.e-o.s)*.5);
   o.puck=place(new THREE.Mesh(unit,new THREE.MeshStandardMaterial({color:0xc5cbd3,roughness:.5})),mid-w/2,mid+w/2,o.y1-9,o.y1-2,o.d+6);
+  if(o.kind==='window'){
+    o.pane=PANE_GLASS.get(paneKey(o.ax,o.c,base,o.s))||null;
+    if(o.pane)o.paneAt=o.pane.position.clone();
+  }
   o.tagAt=new THREE.Vector3((o.ax==='x'?mid:o.c)/100,(base+o.y1+25)/100,(o.ax==='x'?o.c:mid)/100);
   OPEN_BY_ID[o.id]=o;
 });
@@ -860,6 +883,7 @@ function paint(){
     const st=openingState(o).st;
     // no sensor, offline or no reading yet: drawn closed
     if(SWING[o.id])SWING[o.id].target=isAlert(st)?1:0;
+    setShaking(o,st==='shaking');
     o.tint.material.opacity=isAlert(st)?.55:0;
     o.puck.material.color.setHex(isAlert(st)?0xf39a38:st==='closed'?0x0f9d6a:st==='none'?0xc5cbd3:0x93a1b8);
   });
@@ -1435,7 +1459,7 @@ function loop(now){
     camera.position.lerpVectors(tween.p0,tween.p1,e); controls.target.lerpVectors(tween.q0,tween.q1,e);
     if(k>=1)tween=null;
   }
-  stepLamps(); stepSwings(); controls.update(); renderer.render(scene,camera);
+  stepLamps(); stepSwings(); stepShakes(now); controls.update(); renderer.render(scene,camera);
   placeTags(stage.clientWidth,stage.clientHeight);
   // the plan's north is -z: on screen it sits at the camera's azimuth, clockwise from up
   compass.style.transform=`rotate(${controls.getAzimuthalAngle()}rad)`;
