@@ -8,7 +8,7 @@ Nothing is hard-coded per sensor. The server subscribes to Home Assistant MQTT d
 
 - Online / offline comes from each entity's availability topic (`<board>/status`). An offline board's last reading is never counted as someone being there.
 - `esphome/discover/<board>` gives each board's IP.
-- Nothing is stored. The server keeps only the latest value of each entity in memory and streams changes to the page. After a restart it starts from the broker's retained messages (the last state each board published), shown without a "changed … ago" time since that isn't known.
+- Sensor values aren't stored, except in the alarm log (below). The server keeps the latest value of each entity in memory and streams changes to the page. After a restart it starts from the broker's retained messages (the last state each board published), shown without a "changed … ago" time since that isn't known.
 
 ## Placing devices
 
@@ -43,6 +43,23 @@ Panels count from the lower x (west) or lower z (front) end of the window. Each 
 
 A room glows warm while any online presence sensor in it reads occupied; an offline board's last reading is never counted. A device that isn't placed (or names a room that doesn't exist) is listed under **Not placed** in the side panel. Restart after editing.
 
+## Alarm
+
+`data/home.db` (SQLite, `HOME_DATA_DIR` to move it) holds the alarm. It arms itself from a schedule, in the box's local time:
+
+- **Armed periods**: daily windows such as `23:00`–`07:00`. An end before the start runs past midnight.
+- **Away days**: date ranges, inclusive. The alarm stays armed all day.
+
+Arming or disarming by hand overrides the schedule until the schedule itself next changes. For example, disarming at 23:30 inside a 23:00–07:00 period holds until 07:00. `DELETE /api/alarm/override` goes back to the schedule straight away.
+
+Each armed stretch is a session (`alarm_sessions`). While one is open, every live sensor change and every board going online or offline is written to `alarm_events`, with the device's room or opening. Retained values replayed on reconnect aren't logged.
+
+```bash
+curl -X PUT  localhost:8090/api/alarm/periods -H 'content-type: application/json' -d '[{"start":"23:00","end":"07:00"}]'
+curl -X POST localhost:8090/api/alarm/away    -H 'content-type: application/json' -d '{"from":"2026-12-20","to":"2026-12-27","note":"trip"}'
+curl -X POST localhost:8090/api/alarm         -H 'content-type: application/json' -d '{"armed":true}'
+```
+
 ## Run
 
 ```bash
@@ -64,5 +81,12 @@ Live updates are server-sent events on `/api/events`; `flush_interval -1` sends 
 | Path | What |
 |---|---|
 | `GET /api/state` | floors, devices, entities with their current values |
-| `GET /api/events` | server-sent events: a `snapshot`, then each `device` / `entity` / `broker` change |
+| `GET /api/events` | server-sent events: a `snapshot` (with `alarm`), then each `device` / `entity` / `broker` / `alarm` change |
+| `GET /api/alarm` | armed or not, why (`schedule` / `away` / `manual`), any override, the open session, periods and away days |
+| `POST /api/alarm` | `{"armed": bool}`: manual arm or disarm |
+| `DELETE /api/alarm/override` | follow the schedule again |
+| `GET`/`PUT /api/alarm/periods` | daily armed periods, replaced as a whole |
+| `GET`/`POST /api/alarm/away`, `DELETE /api/alarm/away/:id` | away days |
+| `GET /api/alarm/sessions?limit=` | past armed sessions, newest first |
+| `GET /api/alarm/sessions/:id/events` | what the sensors did during one session |
 | `GET /health` | `{"status":"ok","mqtt":true}` |

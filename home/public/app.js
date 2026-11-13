@@ -900,9 +900,161 @@ function devicesHtml(){
         <dt>${d.available===false?'Offline':'Online'} since</dt><dd>${d.availableAt?`${clockTime(d.availableAt)}, ${ago(d.availableAt)}`:'—'}</dd>
       </dl></article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
 }
+/* ---------- alarm page ---------- */
+// status comes live over SSE; the schedule and the log are fetched (on opening the page, after each change, and as the log grows)
+const alarm={status:null,periods:[],away:[],sessions:[],events:new Map(),open:null,loaded:false,error:null,busy:false};
+async function api(path,opts={}){
+  const r=await fetch('api/alarm'+path,{...opts,headers:opts.body?{'content-type':'application/json'}:{}});
+  if(r.status===204)return null;
+  const j=await r.json().catch(()=>null);
+  if(!r.ok)throw new Error(j?.error||j?.message||`HTTP ${r.status}`);
+  return j;
+}
+async function loadAlarm(){
+  try{
+    const [a,sessions]=await Promise.all([api(''),api('/sessions?limit=10')]);
+    const {periods,away,...status}=a;
+    Object.assign(alarm,{status,periods,away,sessions,loaded:true,error:null});
+    if(alarm.open===null&&sessions.length)alarm.open=sessions[0].id;
+    if(alarm.open!==null)alarm.events.set(alarm.open,await api(`/sessions/${alarm.open}/events`));
+  }catch(err){alarm.error=err.message;}
+  render();
+}
+let logTimer=null;
+const refreshLogSoon=()=>{if(page!=='alarm'||!alarm.status?.armed||logTimer)return;logTimer=setTimeout(()=>{logTimer=null;loadAlarm();},2000);};
+async function alarmDo(fn){
+  if(alarm.busy)return; alarm.busy=true; alarm.error=null; alarmDirty=false; render(); // acting on the page drops any half-filled form
+  try{await fn();}catch(err){alarm.error=err.message;}
+  alarm.busy=false; await loadAlarm();
+}
+const shortDate=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'});
+const when=t=>{const d=new Date(t),today=new Date().toDateString()===d.toDateString();
+  return today?clockTime(t):`${d.toLocaleDateString(undefined,{day:'numeric',month:'short'})}, ${clockTime(t)}`;};
+const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
+function alarmNote(s){
+  const away=alarm.away.find(a=>a.from<=todayStr()&&todayStr()<=a.to);
+  if(s.reason==='away')return `You're away until ${shortDate(away?.to||todayStr())}`;
+  if(s.reason==='schedule'){const m=new Date().getHours()*60+new Date().getMinutes(),mins=t=>+t.slice(0,2)*60+ +t.slice(3);
+    const p=alarm.periods.find(p=>{const a=mins(p.start),b=mins(p.end);return a<b?a<=m&&m<b:m>=a||m<b;});
+    return p?`Armed period ${p.start}–${p.end}`:'Armed by the schedule';}
+  if(s.reason==='manual')return 'Armed by hand, until the schedule next changes';
+  if(s.override)return 'Disarmed by hand, until the schedule next changes';
+  return alarm.periods.length?`Next armed at ${nextStart()}`:'No armed periods set';
+}
+function nextStart(){
+  const m=new Date().getHours()*60+new Date().getMinutes(),mins=t=>+t.slice(0,2)*60+ +t.slice(3);
+  const sorted=alarm.periods.map(p=>p.start).sort();
+  return sorted.find(t=>mins(t)>m)||sorted[0];
+}
+function eventLine(e){
+  const dev=live.devices.get(e.device), where=ROOM_BY_ID[e.room]?.name||OPEN_BY_ID[e.opening]?.name||dev?.label||e.device;
+  if(e.kind==='availability')return {where,what:e.value?'Back online':'Went offline',hot:!e.value};
+  const ent=live.entities.get(e.entity)||{deviceClass:null,unit:e.unit};
+  const what=typeof e.value==='boolean'?formatValue({...ent,value:e.value}):`${e.name} ${formatValue({...ent,unit:e.unit,value:e.value})}`;
+  return {where,what,hot:e.value===true};
+}
+function alarmHtml(){
+  const s=alarm.status;
+  if(!s)return `${headHtml('Alarm','Arms itself from your schedule')}<p class="empty">${alarm.error?esc(alarm.error):'Loading…'}</p>`;
+  const sess=s.session, evs=sess?alarm.events.get(sess.id):null;
+  const dis=alarm.busy?' disabled':'';
+  const periods=alarm.periods.map((p,i)=>`<li class="mini"><span class="mono">${p.start} – ${p.end}${p.end<p.start?' <small class="label" style="display:inline">next day</small>':''}</span>
+      <button class="btn ghost" data-act="del-period" data-i="${i}" aria-label="Remove ${p.start} to ${p.end}"${dis}>Remove</button></li>`).join('');
+  const today=todayStr();
+  const aways=alarm.away.map(a=>`<li class="mini"><span>${shortDate(a.from)}${a.to!==a.from?` – ${shortDate(a.to)}`:''}${a.note?` · ${esc(a.note)}`:''}${a.from<=today&&today<=a.to?' <b class="on">now</b>':a.to<today?' <b>past</b>':''}</span>
+      <button class="btn ghost" data-act="del-away" data-id="${a.id}" aria-label="Remove away ${a.from} to ${a.to}"${dis}>Remove</button></li>`).join('');
+  const log=alarm.sessions.map(x=>{
+    const open=alarm.open===x.id, list=open?alarm.events.get(x.id):null;
+    const why={schedule:'Schedule',away:'Away',manual:'By hand'}[x.reason];
+    return `<li class="sess${open?' open':''}"><button class="mini sess-head" data-act="sess" data-id="${x.id}" aria-expanded="${open}">
+        <span>${when(x.armedAt)} → ${x.disarmedAt?when(x.disarmedAt):'<b class="on">now</b>'}</span><b>${why}</b></button>
+      ${open?(list?(list.length?`<ul class="minis log">${list.slice().reverse().map(e=>{const l=eventLine(e);
+        return `<li class="mini"><span><b class="mono">${clockTime(e.at)}</b> ${esc(l.where)}</span><b class="${l.hot?'on':''}">${esc(l.what)}</b></li>`;}).join('')}</ul>`
+        :'<p class="note">Nothing happened.</p>'):'<p class="note">Loading…</p>'):''}</li>`;}).join('');
+  return `${headHtml('Alarm','Arms itself from your schedule')}
+    <article class="panel-card">
+      <div class="card-head ${s.armed?'on':'off'}"><span class="ico ${s.armed?'on':''}">${IMG(s.armed?'alarm':'security')}</span>
+        <div><span class="label">Right now</span><strong class="big">${s.armed?'Armed':'Disarmed'}</strong><p class="note">${esc(alarmNote(s))}</p></div></div>
+      <div class="stats">
+        <div class="stat"><span class="label">Armed</span><strong>${sess?ago(sess.armedAt).replace(' ago',''):'—'}</strong></div>
+        <div class="stat"><span class="label">Logged</span><strong>${evs?evs.length:'—'}</strong></div>
+        <div class="stat"><span class="label">Periods</span><strong>${alarm.periods.length}</strong></div>
+      </div>
+      <div class="actions">
+        <button class="btn ${s.armed?'':'primary'}" data-act="${s.armed?'disarm':'arm'}"${dis}>${s.armed?'Disarm now':'Arm now'}</button>
+        ${s.override?`<button class="btn ghost" data-act="follow"${dis}>Follow the schedule</button>`:''}
+      </div>
+      ${alarm.error?`<p class="note err-note" role="alert">${esc(alarm.error)}</p>`:''}
+    </article>
+
+    <h2 class="section">Armed every day</h2>
+    <article class="panel-card">
+      ${periods?`<ul class="minis">${periods}</ul>`:'<p class="note">No periods yet. The alarm only arms on away days or by hand.</p>'}
+      <form class="add" data-form="period">
+        <label><span class="label">From</span><input type="time" name="start" required></label>
+        <label><span class="label">To</span><input type="time" name="end" required></label>
+        <button class="btn primary"${dis}>Add</button>
+      </form>
+      <p class="note">An end earlier than the start runs past midnight. Times are the box's clock.</p>
+    </article>
+
+    <h2 class="section">Away from home</h2>
+    <article class="panel-card">
+      ${aways?`<ul class="minis">${aways}</ul>`:'<p class="note">No away days. On these days the alarm stays armed all day.</p>'}
+      <form class="add" data-form="away">
+        <label><span class="label">From</span><input type="date" name="from" min="${today}" required></label>
+        <label><span class="label">To</span><input type="date" name="to" min="${today}" required></label>
+        <label class="wide"><span class="label">Note</span><input type="text" name="note" maxlength="200" placeholder="Optional, e.g. trip"></label>
+        <button class="btn primary"${dis}>Add</button>
+      </form>
+    </article>
+
+    <h2 class="section">Log</h2>
+    ${log?`<ul class="minis sessions">${log}</ul>`:'<p class="empty">Nothing yet. Each time the alarm arms, what the sensors do is logged here.</p>'}`;
+}
+let alarmDirty=false; // a half-filled form: don't redraw over it
+function bindAlarm(){
+  panel.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
+    const a=b.dataset.act;
+    if(a==='arm'||a==='disarm')alarmDo(()=>api('',{method:'POST',body:JSON.stringify({armed:a==='arm'})}));
+    else if(a==='follow')alarmDo(()=>api('/override',{method:'DELETE'}));
+    else if(a==='del-period'){const list=alarm.periods.filter((_,i)=>i!==+b.dataset.i).map(({start,end})=>({start,end}));
+      alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));}
+    else if(a==='del-away')alarmDo(()=>api(`/away/${b.dataset.id}`,{method:'DELETE'}));
+    else if(a==='sess'){const id=+b.dataset.id;alarm.open=alarm.open===id?-1:id;
+      if(alarm.open===id&&!alarm.events.has(id))api(`/sessions/${id}/events`).then(ev=>{alarm.events.set(id,ev);render();});
+      render();}
+  });
+  panel.querySelectorAll('form[data-form]').forEach(f=>{
+    f.oninput=()=>{alarmDirty=true;};
+    f.onsubmit=e=>{
+      e.preventDefault(); const v=Object.fromEntries(new FormData(f));
+      if(f.dataset.form==='period'){
+        if(v.start===v.end){alarm.error='Start and end must differ';alarmDirty=false;render();return;}
+        const list=[...alarm.periods.map(({start,end})=>({start,end})),{start:v.start,end:v.end}];
+        alarmDirty=false; alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));
+      }else{
+        if(v.to<v.from){alarm.error='The last day is before the first';alarmDirty=false;render();return;}
+        alarmDirty=false; alarmDo(()=>api('/away',{method:'POST',body:JSON.stringify({from:v.from,to:v.to,...(v.note?{note:v.note}:{})})}));
+      }
+    };
+  });
+}
 function renderPanel(){
   // keep keyboard focus across live re-renders
   const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room):null;
+  if(page==='alarm'){
+    // a form being filled in survives live updates; the page redraws only when its content changes
+    const typing=f&&panel.contains(f)&&f.matches('input');
+    if(alarmDirty||typing)return;
+    const html=alarmHtml();
+    if(panel._html===html)return;
+    const top=panel.scrollTop; panel._html=html; panel.innerHTML=html; panel.scrollTop=top;
+    bindAlarm();
+    if(f&&panel.contains(f)===false&&f.dataset?.act)panel.querySelector(`[data-act="${CSS.escape(f.dataset.act)}"]${f.dataset.id?`[data-id="${CSS.escape(f.dataset.id)}"]`:''}`)?.focus();
+    return;
+  }
+  panel._html=null;
   const top=panel.scrollTop;
   panel.innerHTML=page==='devices'?devicesHtml():overviewHtml();
   panel.scrollTop=top;
@@ -1042,7 +1194,8 @@ document.getElementById('zoom-in').onclick=()=>zoom(.75);
 document.getElementById('zoom-out').onclick=()=>zoom(1/.75);
 document.getElementById('reset').onclick=()=>{sel=null;const p=PRESET[view];flyTo(p.pos,p.tgt);render();};
 document.querySelectorAll('button.rail-btn').forEach(b=>b.onclick=()=>{
-  page=b.dataset.page;
+  page=b.dataset.page; alarmDirty=false;
+  if(page==='alarm')loadAlarm();
   document.querySelectorAll('button.rail-btn').forEach(x=>x===b?x.setAttribute('aria-current','page'):x.removeAttribute('aria-current'));
   panel.scrollTop=0; render();
 });
@@ -1055,8 +1208,10 @@ function apply(msg){
     live.devices=new Map(msg.devices.map(d=>[d.id,d]));
     live.entities=new Map(msg.entities.map(e=>[e.id,e]));
     msg.entities.forEach(e=>seen(e.at)); msg.devices.forEach(d=>seen(d.availableAt));
-  } else if(msg.type==='device'){live.devices.set(msg.device.id,msg.device);seen(msg.device.availableAt);}
-  else if(msg.type==='entity'){live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);}
+    if(msg.alarm){alarm.status=msg.alarm;if(page==='alarm')loadAlarm();}
+  } else if(msg.type==='device'){live.devices.set(msg.device.id,msg.device);seen(msg.device.availableAt);refreshLogSoon();}
+  else if(msg.type==='entity'){live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);refreshLogSoon();}
+  else if(msg.type==='alarm'){alarm.status=msg.alarm;if(page==='alarm')loadAlarm();}
   else if(msg.type==='broker')live.brokerUp=msg.connected;
   render();
 }
