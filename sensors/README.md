@@ -18,7 +18,7 @@ Everything shared lives in `presence-base.yaml`; each board file only sets its `
 | RX | TX (GPIO16) |
 | TX | RX (GPIO17) |
 
-The sensor streams `ON`/`OFF` and `Range <cm>` lines at 115200 baud, about 10 a second. If a board reads nothing, check the wires first: both faults so far were broken jumper wires.
+The sensor streams `ON`/`OFF` and `Range <cm>` lines at 115200 baud, about 10 a second. If a board reads nothing, check the wires first: every fault so far was a broken or loose jumper wire.
 
 ## Range cap
 
@@ -37,7 +37,8 @@ The sensor's own max-gate setting isn't used: the vendor wiki documents reading 
 | Topic | Payload | Retained |
 |---|---|---|
 | `<board>/status` | `online` / `offline` (offline about a minute after the board loses power) | yes |
-| `<board>/binary_sensor/occupied/state` | `ON` / `OFF`, on change. Only counts people within `max_range_cm` (default 300); goes `OFF` after 5 s with nobody that close | yes |
+| `<board>/binary_sensor/occupied/state` | `ON` / `OFF`, on change. `ON` while the mmWave sees someone within `max_range_cm` (default 300) **or** the PIR sees motion; goes `OFF` after 5 s with neither | yes |
+| `<board>/binary_sensor/pir/state` | `ON` / `OFF`: AM312 PIR on GPIO5, on for ~2 s per motion | yes |
 | `<board>/sensor/distance/state` | cm to the detected person; median-filtered, at most once a second, only on a change of 15 cm or more; only updates while someone is within range | yes |
 | `<board>/debug` | ESPHome log lines | no |
 
