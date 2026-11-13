@@ -48,11 +48,11 @@ interval:
               // "ON" is always followed by a "Range" line, so presence is decided there:
               // a person beyond max_range_cm (another room, through a wall) counts as absent.
               if (line == "OFF") {
-                id(occupied).publish_state(false);
+                id(mmwave).publish_state(false);
               } else if (line.rfind("Range ", 0) == 0) {
                 int cm = atoi(line.c_str() + 6);
                 bool near = cm <= ${max_range_cm};
-                id(occupied).publish_state(near);
+                id(mmwave).publish_state(near);
                 if (near) id(distance).publish_state(cm);
               }
               line.clear();
@@ -62,12 +62,29 @@ interval:
           }
 
 binary_sensor:
+  # mmWave presence within max_range_cm, set by the UART parser above. Not published on its own.
+  - platform: template
+    id: mmwave
+    internal: true
+
+  # Someone is there if either sensor says so: the mmWave sees people sitting still,
+  # the PIR catches movement the mmWave misses (or ignores beyond max_range_cm).
   - platform: template
     id: occupied
     name: Occupied           # -> ${name}/binary_sensor/occupied/state  ON | OFF
     device_class: occupancy
+    lambda: return id(mmwave).state || id(pir).state;
     filters:
       - delayed_off: 5s      # a one-off far reading (e.g. 661 cm spike) mustn't flip it OFF
+
+  # AM312 mini PIR. OUT goes HIGH (3.3 V) for ~2 s on motion; needs ~30-60 s warm-up after power-on.
+  - platform: gpio
+    id: pir
+    name: PIR                # -> ${name}/binary_sensor/pir/state  ON | OFF
+    pin:
+      number: GPIO5
+      mode: INPUT            # AM312 drives the pin both HIGH and LOW; a pull-down drags its weak HIGH below the C6's threshold
+    device_class: motion
 
 sensor:
   - platform: template
