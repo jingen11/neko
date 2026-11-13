@@ -34,8 +34,6 @@ export const config = {
   mqttPassword: process.env.MQTT_PASSWORD ?? "",
   /** Home Assistant discovery prefix. ESPHome publishes here; Zigbee2MQTT does too with `homeassistant: true`. */
   discoveryPrefix: process.env.DISCOVERY_PREFIX ?? "homeassistant",
-  /** Zigbee2MQTT's base topic: renames are sent to <base>/bridge/request/device/rename */
-  z2mBaseTopic: process.env.Z2M_BASE_TOPIC ?? "zigbee2mqtt",
   publicDir: path.join(root, "public"),
   /** home.db (alarm sessions and what the sensors did while armed) */
   dataDir: process.env.HOME_DATA_DIR ?? path.join(root, "data"),

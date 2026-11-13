@@ -944,9 +944,10 @@ function openingsHtml(states,hot){
       <div class="stat"><span class="label">Offline</span><strong>${fitted.length?off.length:'—'}</strong></div>
     </div></article>`;
 }
-/* ---------- editing a device: rename it (Zigbee2MQTT), label it, put it in a room or on a door/window ----------
-   The form's values live here, not in the DOM: the Devices tab redraws on every live reading. */
-const edit={id:null,name:'',label:'',place:'',busy:false,error:null};
+/* ---------- editing a device: label it, put it in a room or on a door/window ----------
+   (its name is Zigbee2MQTT's or ESPHome's: rename it there). The form's values live here, not in the DOM:
+   the Devices tab redraws on every live reading. */
+const edit={id:null,label:'',place:'',busy:false,error:null};
 const placeOf=d=>d.room?`room:${d.room}`:d.opening?`opening:${d.opening}`:'';
 function placeOptions(cur){
   const opt=(v,t)=>`<option value="${v}"${v===cur?' selected':''}>${esc(t)}</option>`;
@@ -958,9 +959,6 @@ function placeOptions(cur){
 function editHtml(d){
   const dis=edit.busy?' disabled':'';
   return `<form class="dev-edit" data-form="${esc(d.id)}">
-    ${d.zigbee?`<label><span class="label">Name in Zigbee2MQTT</span>
-      <input class="field" id="ed-name" value="${esc(edit.name)}" maxlength="64" autocomplete="off" spellcheck="false"${dis}>
-      <small class="note">Letters, digits, _ - . and spaces. Its readings and place follow it.</small></label>`:''}
     <label><span class="label">Label on the dashboard</span>
       <input class="field" id="ed-label" value="${esc(edit.label)}" maxlength="60" autocomplete="off"${dis}></label>
     <label><span class="label">Place</span>
@@ -973,8 +971,7 @@ function editHtml(d){
 }
 async function saveDevice(d){
   const body={}, [kind,where]=edit.place?edit.place.split(':'):[null,null];
-  const name=edit.name.trim(), label=edit.label.trim();
-  if(d.zigbee&&name&&name!==d.id)body.name=name;
+  const label=edit.label.trim();
   if(label&&label!==d.label)body.label=label;
   if(edit.place!==placeOf(d)){if(kind==='opening')body.opening=where;else body.room=where;}
   if(!Object.keys(body).length){edit.id=null;render();return;}
@@ -990,13 +987,12 @@ async function saveDevice(d){
 function bindDevices(){
   panel.querySelectorAll('[data-act="edit"]').forEach(b=>b.onclick=()=>{
     const d=live.devices.get(b.dataset.dev); if(!d)return;
-    Object.assign(edit,{id:d.id,name:d.id,label:d.label,place:placeOf(d),busy:false,error:null}); render();
-    requestAnimationFrame(()=>panel.querySelector('#ed-name,#ed-label')?.focus());
+    Object.assign(edit,{id:d.id,label:d.label,place:placeOf(d),busy:false,error:null}); render();
+    requestAnimationFrame(()=>panel.querySelector('#ed-label')?.focus());
   });
   panel.querySelectorAll('[data-act="edit-cancel"]').forEach(b=>b.onclick=()=>{edit.id=null;render();});
   const form=panel.querySelector('.dev-edit'); if(!form)return;
   const d=live.devices.get(form.dataset.form);
-  form.querySelector('#ed-name')?.addEventListener('input',e=>{edit.name=e.target.value;});
   form.querySelector('#ed-label').addEventListener('input',e=>{edit.label=e.target.value;});
   form.querySelector('#ed-place').addEventListener('change',e=>{edit.place=e.target.value;});
   form.onsubmit=e=>{e.preventDefault(); if(d&&!edit.busy)saveDevice(d);};
@@ -1005,13 +1001,12 @@ function devicesHtml(){
   // new, unplaced devices first, so a freshly paired one is easy to find
   const isPlaced=d=>!!(ROOM_BY_ID[d.room]||OPEN_BY_ID[d.opening]);
   const devs=[...live.devices.values()].sort((a,b)=>isPlaced(a)-isPlaced(b)||a.label.localeCompare(b.label));
-  if(edit.id&&!live.devices.has(edit.id)&&!edit.busy)edit.id=null; // renamed or gone
+  if(edit.id&&!live.devices.has(edit.id)&&!edit.busy)edit.id=null; // renamed in Zigbee2MQTT, or gone
   return `${headHtml('Devices','Found through MQTT discovery')}
     ${devs.length?devs.map(d=>{const room=ROOM_BY_ID[d.room],op=OPEN_BY_ID[d.opening],editing=edit.id===d.id;return `<article class="panel-card">
       <div class="card-head"><span class="ico ${d.available===false?'off':''}">${(op?openingIcon(op,openingState(op).st):IMG(occupancyOf(d.id)?'motion':'devices'))}</span>
-        <div style="flex:1;min-width:0"><strong class="name" style="font:600 16px var(--f-head)">${esc(d.label)}</strong><span class="label">${esc(d.id)}</span></div>
-        <span class="status ${d.available===false?'down':d.available?'up':''}">${d.available===false?'Offline':d.available?'Online':'Unknown'}</span>
-        ${editing?'':`<button class="btn ${isPlaced(d)?'ghost':'primary'} dev-edit-btn" data-act="edit" data-dev="${esc(d.id)}" aria-label="Edit ${esc(d.label)}">${isPlaced(d)?'Edit':'Place'}</button>`}</div>
+        <div class="dev-title"><strong class="name" title="${esc(d.label)}">${esc(d.label)}</strong><span class="label" title="${esc(d.id)}">${esc(d.id)}</span></div>
+        <span class="status ${d.available===false?'down':d.available?'up':''}">${d.available===false?'Offline':d.available?'Online':'Unknown'}</span></div>
       ${editing?editHtml(d):''}
       <dl class="facts">
         <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed yet'}</dd>
@@ -1020,7 +1015,8 @@ function devicesHtml(){
         <dt>IP</dt><dd>${esc(d.ip||'—')}</dd>
         <dt>Board</dt><dd>${esc([d.model,d.firmware&&'ESPHome '+d.firmware].filter(Boolean).join(' · ')||'—')}</dd>
         <dt>${d.available===false?'Offline':'Online'} since</dt><dd>${d.availableAt?`${clockTime(d.availableAt)}, ${ago(d.availableAt)}`:'—'}</dd>
-      </dl></article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
+      </dl>
+      ${editing?'':`<div class="actions"><button class="btn ${isPlaced(d)?'':'primary'}" data-act="edit" data-dev="${esc(d.id)}" aria-label="${isPlaced(d)?'Edit':'Place'} ${esc(d.label)}">${isPlaced(d)?'Edit label or place':'Place this device'}</button></div>`}</article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
 }
 /* ---------- alarm page ---------- */
 // status comes live over SSE; the schedule and the alarms are fetched (on opening the page, after each change, and as alarms come in)

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import mqtt, { type MqttClient } from "mqtt";
-import { config, layout } from "./config.ts";
+import { config, layout, saveLayout } from "./config.ts";
 
 /**
  * Nothing is stored: only the latest value of each entity is kept in memory and streamed to the page.
@@ -191,6 +191,13 @@ function onDiscovery(topic: string, payload: string) {
   if (existing && existing.device !== device.id) {
     const old = existing.device;
     entity.device = device.id;
+    // its place in layout.json goes with it, unless the new name already has one
+    if (layout.devices[old] && !layout.devices[device.id]) {
+      layout.devices[device.id] = layout.devices[old];
+      delete layout.devices[old];
+      saveLayout();
+      place(device.id);
+    }
     dropIfEmpty(old);
   }
 
@@ -265,34 +272,6 @@ export function place(id: string) {
 }
 
 export const device = (id: string) => devices.get(id) ?? null;
-
-/** Zigbee2MQTT bridge requests: answered on <base>/bridge/response/<same path>, matched by transaction id. */
-const pendingZ2m = new Map<string, { resolve: (r: Json) => void; timer: NodeJS.Timeout }>();
-export function zigbeeRequest(what: string, payload: Json, timeoutMs = 10_000): Promise<Json> {
-  if (!client?.connected) return Promise.reject(new Error("MQTT broker not connected"));
-  const transaction = randomUUID().slice(0, 8);
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingZ2m.delete(transaction);
-      reject(new Error("Zigbee2MQTT did not answer (is it running?)"));
-    }, timeoutMs);
-    pendingZ2m.set(transaction, { resolve, timer });
-    client!.publish(`${config.z2mBaseTopic}/bridge/request/${what}`, JSON.stringify({ ...payload, transaction }));
-  });
-}
-function onZ2mResponse(text: string) {
-  let r: Json;
-  try {
-    r = JSON.parse(text);
-  } catch {
-    return;
-  }
-  const p = typeof r.transaction === "string" ? pendingZ2m.get(r.transaction) : undefined;
-  if (!p) return;
-  clearTimeout(p.timer);
-  pendingZ2m.delete(r.transaction as string);
-  p.resolve(r);
-}
 
 function dropIfEmpty(id: string) {
   for (const e of entities.values()) if (e.device === id) return;
@@ -386,7 +365,7 @@ export function start(log: { info: (m: string) => void; warn: (m: string) => voi
     connected = true;
     emit({ type: "broker", connected });
     log.info(`mqtt connected to ${config.mqttUrl}`);
-    client!.subscribe([`${config.discoveryPrefix}/#`, "esphome/discover/#", `${config.z2mBaseTopic}/bridge/response/#`, ...byStateTopic.keys(), ...byAvailTopic.keys()]);
+    client!.subscribe([`${config.discoveryPrefix}/#`, "esphome/discover/#", ...byStateTopic.keys(), ...byAvailTopic.keys()]);
   });
   client.on("close", () => {
     if (!connected) return;
@@ -398,7 +377,6 @@ export function start(log: { info: (m: string) => void; warn: (m: string) => voi
     const text = payload.toString();
     if (topic.startsWith(`${config.discoveryPrefix}/`)) onDiscovery(topic, text);
     else if (topic.startsWith("esphome/discover/")) onDiscover(topic, text);
-    else if (topic.startsWith(`${config.z2mBaseTopic}/bridge/response/`)) onZ2mResponse(text);
     else onState(topic, text, packet.retain);
   });
 }

@@ -309,7 +309,12 @@ button.tool:active img{transform:scale(.88)}
   .room-card{left:12px;right:auto;bottom:12px;width:auto;max-width:calc(100% - 88px);max-height:calc(100% - 92px)}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
-.dev-edit-btn{min-height:36px;margin-left:4px}
-.dev-edit{display:grid;gap:12px;margin:4px 0 14px;padding:14px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--glass-hi)}
-.dev-edit label{display:grid;gap:6px}
-.dev-edit select.field{appearance:auto}
+.dev-title{flex:1;min-width:0}
+.dev-title .name{display:block;font:600 16px var(--f-head);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dev-title .label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dev-edit{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:14px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--glass-hi)}
+.dev-edit label{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0}
+/* a select is as wide as its longest option unless told otherwise */
+.dev-edit .field{min-width:0;max-width:100%}
+.dev-edit select.field{appearance:auto;text-overflow:ellipsis}
+.panel-card .facts dd{min-width:0}

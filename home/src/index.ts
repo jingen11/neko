@@ -1,6 +1,6 @@
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
-import { device, place, snapshot, start, subscribe, zigbeeRequest } from "./broker.ts";
+import { device, place, snapshot, start, subscribe } from "./broker.ts";
 import { isOpening, isRoom, openings, rooms } from "./areas.ts";
 import { addAway, alarms, alarmsSince, aways, clearOverride, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
 import { config, layout, saveLayout } from "./config.ts";
@@ -41,15 +41,15 @@ app.get("/api/areas", async () => ({ rooms, openings }));
 app.get("/api/devices", async () => snapshot().devices);
 
 /**
- * Change a device: any of
- *   name     rename it in Zigbee2MQTT (Zigbee devices only); its readings and place follow it to the new name
+ * Change where a device is shown: any of
  *   label    what the dashboard calls it
  *   room     a room id from /api/areas, or null to take it out (clears opening)
  *   opening  a door or window id from /api/areas, or null (clears room)
- * e.g. PATCH /api/devices/0xa4c138117ddcffff {"name":"lobby_plug","label":"Lobby plug","room":"lobby"}
- * Saved to layout.json; the page updates straight away.
+ * e.g. PATCH /api/devices/lobby_plug {"label":"Lobby plug","room":"lobby"}
+ * Saved to layout.json; the page updates straight away. The device's name (its id) belongs to Zigbee2MQTT or ESPHome:
+ * rename it there; a Zigbee2MQTT rename carries its readings and its place in layout.json over to the new name.
  */
-app.patch<{ Params: { id: string }; Body: { name?: string; label?: string; room?: string | null; opening?: string | null } }>(
+app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null; opening?: string | null } }>(
   "/api/devices/:id",
   {
     schema: {
@@ -58,8 +58,6 @@ app.patch<{ Params: { id: string }; Body: { name?: string; label?: string; room?
         minProperties: 1,
         additionalProperties: false,
         properties: {
-          // Zigbee2MQTT friendly names become MQTT topics: no "/", "#", "+" or surrounding spaces
-          name: { type: "string", pattern: "^[A-Za-z0-9_-][A-Za-z0-9 _.-]{0,62}[A-Za-z0-9_.-]$|^[A-Za-z0-9_-]$" },
           label: { type: "string", minLength: 1, maxLength: 60 },
           room: { type: ["string", "null"] },
           opening: { type: ["string", "null"] },
@@ -68,32 +66,16 @@ app.patch<{ Params: { id: string }; Body: { name?: string; label?: string; room?
     },
   },
   async (req, reply) => {
-    let id = req.params.id;
+    const id = req.params.id;
     const b = req.body;
     const d = device(id);
     if (!d) return reply.code(404).send({ error: `no device "${id}" (see GET /api/devices)` });
+    // unknown fields (e.g. "name": renames happen in Zigbee2MQTT) are stripped by validation, which can leave nothing
+    if (b.label === undefined && b.room === undefined && b.opening === undefined)
+      return reply.code(400).send({ error: "nothing to change: send label, room or opening (rename the device in Zigbee2MQTT)" });
     if (b.room && b.opening) return reply.code(400).send({ error: "a device goes in a room or on an opening, not both" });
     if (b.room && !isRoom(b.room)) return reply.code(400).send({ error: `unknown room "${b.room}" (see GET /api/areas)` });
     if (b.opening && !isOpening(b.opening)) return reply.code(400).send({ error: `unknown opening "${b.opening}" (see GET /api/areas)` });
-
-    if (b.name !== undefined && b.name !== id) {
-      if (!d.zigbee) return reply.code(400).send({ error: `"${id}" is not a Zigbee2MQTT device: rename ESPHome boards in their YAML` });
-      if (device(b.name) || layout.devices[b.name]) return reply.code(409).send({ error: `"${b.name}" is already taken` });
-      let r;
-      try {
-        r = await zigbeeRequest("device/rename", { from: id, to: b.name, homeassistant_rename: true });
-      } catch (err) {
-        return reply.code(504).send({ error: (err as Error).message });
-      }
-      if (r.status !== "ok") return reply.code(502).send({ error: `Zigbee2MQTT: ${String(r.error ?? "rename failed")}` });
-      // the place belongs to the physical device: carry it over to the new name
-      if (layout.devices[id]) {
-        layout.devices[b.name] = layout.devices[id];
-        delete layout.devices[id];
-      }
-      req.log.info(`renamed ${id} -> ${b.name} in Zigbee2MQTT`);
-      id = b.name;
-    }
 
     const p = { ...(layout.devices[id] ?? { label: device(id)?.label ?? id }) };
     if (b.label !== undefined) p.label = b.label;
@@ -110,8 +92,7 @@ app.patch<{ Params: { id: string }; Body: { name?: string; label?: string; room?
     layout.devices[id] = p;
     saveLayout();
     place(id);
-    // after a rename Zigbee2MQTT's new discovery may not have arrived yet: the device is placed when it does
-    return device(id) ?? { id, ...p };
+    return device(id);
   },
 );
 
