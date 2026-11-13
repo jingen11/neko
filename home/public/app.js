@@ -261,8 +261,30 @@ for(let j=0;j<5;j++)box(g,102+j*20.4,102+(j+1)*20.4,0,(11+j)*R,590,690,M.stair);
 // counters
 box(g,648,708,0,86,846,1206,M.counter); box(g,646,710,86,92,844,1206,M.top);
 box(g,400,708,0,86,1368,1428,M.counter); box(g,400,710,86,92,1366,1430,M.top);
-[[90,6,90,96,M.door],[270,6,270,96,M.door],[336,724,246,724,M.idoor],[134,1254,134,1329,'wet'],[396,1262,321,1262,'wet']]
+[[336,724,246,724,M.idoor],[134,1254,134,1329,'wet'],[396,1262,321,1262,'wet']]
   .forEach(([a,b,c,d,m])=>leaf(g,a,b,c,d,0,m));
+/* doors that swing with their sensor: each leaf turns on its hinge, closed in the wall line, open into the room.
+   Keyed by opening id (OPENINGS below); `outside` holds the street-side panels hidden while the door is open. */
+const SWING={};
+function swingLeaf(id,grp,hx,hz,len,openAngle,mat){
+  const pivot=new THREE.Group(); pivot.position.set(hx,0,hz); grp.add(pivot);
+  // the leaf runs along +x from the hinge (len<0: along -x), 4 cm thick, like leaf()
+  const m=new THREE.Mesh(new THREE.BoxGeometry(Math.abs(len),204,4),mat);
+  m.position.set(len/2,103,0); m.castShadow=true; m.receiveShadow=true; pivot.add(m);
+  const s=SWING[id]||(SWING[id]={leaves:[],outside:[],target:0,k:0});
+  s.leaves.push({pivot,openAngle});
+  return s;
+}
+// main timber double doors: hinges at x=90 and x=270 on the front wall (z=6), meeting at x=180, opening into the lobby (+z)
+swingLeaf('door-front',g,90,6,90,-Math.PI/2,M.door);
+swingLeaf('door-front',g,270,6,-90,Math.PI/2,M.door);
+function stepSwings(){
+  Object.values(SWING).forEach(s=>{
+    s.k+=(s.target-s.k)*.12; if(Math.abs(s.target-s.k)<.002)s.k=s.target;
+    s.leaves.forEach(l=>{l.pivot.rotation.y=l.openAngle*s.k;});
+    s.outside.forEach(m=>{m.visible=s.k<.5;});
+  });
+}
 
 /* ---------- upper floor ---------- */
 const u=G.u;
@@ -541,21 +563,22 @@ for(const [x,z,size] of [[795,-155,.7],[851,-50,.55],[827,110,.6],[812,390,.68],
 (function(){
   const f=G.facade;
   // Main timber double doors: dark mahogany, curved routed detailing and chrome handles.
+  const outside=SWING['door-front'].outside;
   [[94,177],[181,266]].forEach(([l,r],i)=>{
-    box(f,l,r,1,210,-5,-2,M.door);
-    box(f,l+8,r-8,9,201,-7,-5,M.door);
-    box(f,l+17,r-17,31,33,-8,-6,M.woodGroove,false);
-    box(f,l+17,r-17,124,126,-8,-6,M.woodGroove,false);
+    outside.push(box(f,l,r,1,210,-5,-2,M.door));
+    outside.push(box(f,l+8,r-8,9,201,-7,-5,M.door));
+    outside.push(box(f,l+17,r-17,31,33,-8,-6,M.woodGroove,false));
+    outside.push(box(f,l+17,r-17,124,126,-8,-6,M.woodGroove,false));
     // Sweeping routed groove traced into each door panel.
     const pts=[];
     for(let j=0;j<=20;j++){
       const yy=26+j*8;const bend=16*Math.sin((yy-26)/160*Math.PI);
       pts.push(new THREE.Vector3((i?l+27:r-27)+(i?-bend:bend),yy,-8));
     }
-    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x352520}));f.add(line);
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x352520}));f.add(line);outside.push(line);
   });
-  box(f,168,172,99,116,-11,-8,M.inox,false);
-  box(f,179,183,99,116,-11,-8,M.inox,false);
+  outside.push(box(f,168,172,99,116,-11,-8,M.inox,false));
+  outside.push(box(f,179,183,99,116,-11,-8,M.inox,false));
   box(f,82,278,209,218,-8,9,M.concrete);
   // Exterior window trims make the glazing look like actual aluminium-frame windows.
   function windowTrim(ax,c,l,r,base,sill,head,panes=3){
@@ -687,6 +710,9 @@ OPENINGS.forEach(o=>{
 const live={connected:false,everConnected:false,brokerUp:false,devices:new Map(),entities:new Map()};
 const OCC=['occupancy','presence','motion'];
 const entitiesOf=id=>[...live.entities.values()].filter(e=>e.device===id);
+// the room card shows what a device is for; diagnostics (battery, link quality, ...) stay on the Devices tab,
+// except connectivity, so a device made only of diagnostics (the Zigbee2MQTT bridge) still shows if it's up
+const cardEntitiesOf=id=>entitiesOf(id).filter(e=>!e.diagnostic||e.deviceClass==='connectivity');
 const occupancyOf=id=>entitiesOf(id).find(e=>e.component==='binary_sensor'&&OCC.includes(e.deviceClass||''));
 const distanceOf=id=>entitiesOf(id).find(e=>e.component==='sensor'&&e.unit==='cm');
 const devicesIn=r=>[...live.devices.values()].filter(d=>d.room===r.id).sort((a,b)=>a.label.localeCompare(b.label));
@@ -793,14 +819,47 @@ function select(r){
 }
 // occupied rooms glow cat-orange on their floor; selection and hover use the accent
 const C_ACC=new THREE.Color(0x0a84ff),C_WARM=new THREE.Color(0xf39a38);
+/* a ceiling lamp in every room with a presence sensor: lit while someone is there.
+   Made on first use, so the light count (which recompiles materials) only changes when a board appears. */
+const C_BULB_ON=new THREE.Color(0xffd08a),C_BULB_OFF=new THREE.Color(0x9aa3ad);
+const lamps=[];
+function lampOf(r){
+  if(r.lamp)return r.lamp;
+  const base=r.lv==='u'?UB:0, x=r.c[0], z=r.c[1], y=base+H-30;
+  const bulb=new THREE.Mesh(new THREE.SphereGeometry(9,16,12),new THREE.MeshBasicMaterial({color:C_BULB_OFF.clone()}));
+  const halo=new THREE.Mesh(new THREE.SphereGeometry(22,16,12),new THREE.MeshBasicMaterial({color:0xffc27a,transparent:true,opacity:0,depthWrite:false}));
+  const cord=new THREE.Mesh(new THREE.CylinderGeometry(.8,.8,22,6),new THREE.MeshBasicMaterial({color:0x6b737c}));
+  bulb.position.set(x,y,z); halo.position.set(x,y,z); cord.position.set(x,y+15,z);
+  (r.lv==='u'?G.u:G.g).add(bulb,halo,cord); // hidden with its floor
+  // in the scene itself (metres), not a floor group: a hidden group would drop the light and recompile materials
+  const light=new THREE.PointLight(0xffc27a,0,Math.max(4,r.span/100*1.4),1.6);
+  light.position.set(x/100,(y-10)/100,z/100); scene.add(light);
+  r.lamp={r,bulb,halo,light,target:0,k:0}; lamps.push(r.lamp);
+  return r.lamp;
+}
+const LAMP_MAX=2.4;
+function stepLamps(){
+  lamps.forEach(l=>{
+    l.k+=(l.target-l.k)*.12; if(Math.abs(l.target-l.k)<.002)l.k=l.target;
+    l.light.intensity=LAMP_MAX*l.k;
+    l.bulb.material.color.copy(C_BULB_OFF).lerp(C_BULB_ON,l.k);
+    l.halo.material.opacity=.35*l.k;
+  });
+}
 function paint(){
   ROOMS.forEach(r=>{
     const on=roomState(r).st==='on';
+    if(devicesIn(r).some(d=>occupancyOf(d.id))){
+      // the ground-floor view hides the upper floor: its lamps would light the rooms below through the missing slab
+      lampOf(r).target=on&&!(view==='g'&&r.lv==='u')?1:0;
+    }
     r.mesh.material.color.copy(on?C_WARM:C_ACC);
     r.mesh.material.opacity=r===sel?(on?.5:.3):r===hover?(on?.42:.14):on?.32:0;
   });
   OPENINGS.forEach(o=>{
     const st=openingState(o).st;
+    // no sensor, offline or no reading yet: drawn closed
+    if(SWING[o.id])SWING[o.id].target=isAlert(st)?1:0;
     o.tint.material.opacity=isAlert(st)?.55:0;
     o.puck.material.color.setHex(isAlert(st)?0xf39a38:st==='closed'?0x0f9d6a:st==='none'?0xc5cbd3:0x93a1b8);
   });
@@ -885,16 +944,79 @@ function openingsHtml(states,hot){
       <div class="stat"><span class="label">Offline</span><strong>${fitted.length?off.length:'—'}</strong></div>
     </div></article>`;
 }
+/* ---------- editing a device: rename it (Zigbee2MQTT), label it, put it in a room or on a door/window ----------
+   The form's values live here, not in the DOM: the Devices tab redraws on every live reading. */
+const edit={id:null,name:'',label:'',place:'',busy:false,error:null};
+const placeOf=d=>d.room?`room:${d.room}`:d.opening?`opening:${d.opening}`:'';
+function placeOptions(cur){
+  const opt=(v,t)=>`<option value="${v}"${v===cur?' selected':''}>${esc(t)}</option>`;
+  const lv=['g','u','out'];
+  return opt('','Not placed')
+    +lv.map(l=>`<optgroup label="Rooms · ${LVNAME[l]}">${ROOMS.filter(r=>r.lv===l).map(r=>opt('room:'+r.id,r.name)).join('')}</optgroup>`).join('')
+    +['g','u'].map(l=>`<optgroup label="Doors and windows · ${LVNAME[l]}">${OPENINGS.filter(o=>o.lv===l).map(o=>opt('opening:'+o.id,o.name)).join('')}</optgroup>`).join('');
+}
+function editHtml(d){
+  const dis=edit.busy?' disabled':'';
+  return `<form class="dev-edit" data-form="${esc(d.id)}">
+    ${d.zigbee?`<label><span class="label">Name in Zigbee2MQTT</span>
+      <input class="field" id="ed-name" value="${esc(edit.name)}" maxlength="64" autocomplete="off" spellcheck="false"${dis}>
+      <small class="note">Letters, digits, _ - . and spaces. Its readings and place follow it.</small></label>`:''}
+    <label><span class="label">Label on the dashboard</span>
+      <input class="field" id="ed-label" value="${esc(edit.label)}" maxlength="60" autocomplete="off"${dis}></label>
+    <label><span class="label">Place</span>
+      <select class="field" id="ed-place"${dis}>${placeOptions(edit.place)}</select>
+      <small class="note">Presence boards and plugs go in a room; door and window sensors on their door or window.</small></label>
+    ${edit.error?`<p class="note err-note" role="alert">${esc(edit.error)}</p>`:''}
+    <div class="actions"><button class="btn primary" type="submit"${dis}>${edit.busy?'Saving…':'Save'}</button>
+      <button class="btn ghost" type="button" data-act="edit-cancel"${dis}>Cancel</button></div>
+  </form>`;
+}
+async function saveDevice(d){
+  const body={}, [kind,where]=edit.place?edit.place.split(':'):[null,null];
+  const name=edit.name.trim(), label=edit.label.trim();
+  if(d.zigbee&&name&&name!==d.id)body.name=name;
+  if(label&&label!==d.label)body.label=label;
+  if(edit.place!==placeOf(d)){if(kind==='opening')body.opening=where;else body.room=where;}
+  if(!Object.keys(body).length){edit.id=null;render();return;}
+  edit.busy=true;edit.error=null;render();
+  try{
+    const r=await fetch(`api/devices/${encodeURIComponent(d.id)}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error&&j.message?j.message:j.error||`HTTP ${r.status}`);
+    edit.id=null;
+  }catch(err){edit.error=err.message;}
+  edit.busy=false;render();
+}
+function bindDevices(){
+  panel.querySelectorAll('[data-act="edit"]').forEach(b=>b.onclick=()=>{
+    const d=live.devices.get(b.dataset.dev); if(!d)return;
+    Object.assign(edit,{id:d.id,name:d.id,label:d.label,place:placeOf(d),busy:false,error:null}); render();
+    requestAnimationFrame(()=>panel.querySelector('#ed-name,#ed-label')?.focus());
+  });
+  panel.querySelectorAll('[data-act="edit-cancel"]').forEach(b=>b.onclick=()=>{edit.id=null;render();});
+  const form=panel.querySelector('.dev-edit'); if(!form)return;
+  const d=live.devices.get(form.dataset.form);
+  form.querySelector('#ed-name')?.addEventListener('input',e=>{edit.name=e.target.value;});
+  form.querySelector('#ed-label').addEventListener('input',e=>{edit.label=e.target.value;});
+  form.querySelector('#ed-place').addEventListener('change',e=>{edit.place=e.target.value;});
+  form.onsubmit=e=>{e.preventDefault(); if(d&&!edit.busy)saveDevice(d);};
+}
 function devicesHtml(){
-  const devs=[...live.devices.values()].sort((a,b)=>a.label.localeCompare(b.label));
+  // new, unplaced devices first, so a freshly paired one is easy to find
+  const isPlaced=d=>!!(ROOM_BY_ID[d.room]||OPEN_BY_ID[d.opening]);
+  const devs=[...live.devices.values()].sort((a,b)=>isPlaced(a)-isPlaced(b)||a.label.localeCompare(b.label));
+  if(edit.id&&!live.devices.has(edit.id)&&!edit.busy)edit.id=null; // renamed or gone
   return `${headHtml('Devices','Found through MQTT discovery')}
-    ${devs.length?devs.map(d=>{const room=ROOM_BY_ID[d.room],op=OPEN_BY_ID[d.opening];return `<article class="panel-card">
+    ${devs.length?devs.map(d=>{const room=ROOM_BY_ID[d.room],op=OPEN_BY_ID[d.opening],editing=edit.id===d.id;return `<article class="panel-card">
       <div class="card-head"><span class="ico ${d.available===false?'off':''}">${(op?openingIcon(op,openingState(op).st):IMG(occupancyOf(d.id)?'motion':'devices'))}</span>
         <div style="flex:1;min-width:0"><strong class="name" style="font:600 16px var(--f-head)">${esc(d.label)}</strong><span class="label">${esc(d.id)}</span></div>
-        <span class="status ${d.available===false?'down':d.available?'up':''}">${d.available===false?'Offline':d.available?'Online':'Unknown'}</span></div>
+        <span class="status ${d.available===false?'down':d.available?'up':''}">${d.available===false?'Offline':d.available?'Online':'Unknown'}</span>
+        ${editing?'':`<button class="btn ${isPlaced(d)?'ghost':'primary'} dev-edit-btn" data-act="edit" data-dev="${esc(d.id)}" aria-label="Edit ${esc(d.label)}">${isPlaced(d)?'Edit':'Place'}</button>`}</div>
+      ${editing?editHtml(d):''}
       <dl class="facts">
-        <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed (layout.json)'}</dd>
-        ${entitiesOf(d.id).map(e=>`<dt>${esc(e.name)}</dt><dd>${esc(formatValue(e))}${e.at?`, ${ago(e.at)}`:''}</dd>`).join('')}
+        <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed yet'}</dd>
+        ${[false,true].map(diag=>{const es=entitiesOf(d.id).filter(e=>!!e.diagnostic===diag);
+          return (diag&&es.length?'<dt class="facts-group">Diagnostics</dt>':'')+es.map(e=>`<dt>${esc(e.name)}</dt><dd>${esc(formatValue(e))}${e.at?`, ${ago(e.at)}`:''}</dd>`).join('');}).join('')}
         <dt>IP</dt><dd>${esc(d.ip||'—')}</dd>
         <dt>Board</dt><dd>${esc([d.model,d.firmware&&'ESPHome '+d.firmware].filter(Boolean).join(' · ')||'—')}</dd>
         <dt>${d.available===false?'Offline':'Online'} since</dt><dd>${d.availableAt?`${clockTime(d.availableAt)}, ${ago(d.availableAt)}`:'—'}</dd>
@@ -1126,9 +1248,12 @@ function renderPanel(){
     return;
   }
   panel._html=null;
+  // the device form: don't redraw under the caret or an open dropdown (its values are kept in `edit`)
+  if(page==='devices'&&edit.id&&!edit.busy&&f&&panel.contains(f)&&f.matches('input,select'))return;
   const top=panel.scrollTop;
   panel.innerHTML=page==='devices'?devicesHtml():overviewHtml();
   panel.scrollTop=top;
+  if(page==='devices')bindDevices();
   panel.querySelectorAll('.row').forEach(b=>b.onclick=()=>{const r=ROOM_BY_ID[b.dataset.id];select(r===sel?null:r);});
   panel.querySelectorAll('.mini[data-room]').forEach(b=>b.onclick=()=>select(ROOM_BY_ID[b.dataset.room]));
   if(fid)panel.querySelector(`[data-id="${CSS.escape(fid)}"],[data-room="${CSS.escape(fid)}"]`)?.focus();
@@ -1141,7 +1266,7 @@ function renderCard(){
   const r=sel,ds=devicesIn(r),s=roomState(r);
   const cells=ds.flatMap(d=>{
     const off=d.available===false;
-    return entitiesOf(d.id).map(e=>{
+    return cardEntitiesOf(d.id).map(e=>{
       // distance only updates while someone is in range, so once the room is clear its last value is stale
       const stale=e===distanceOf(d.id)&&occupancyOf(d.id)?.value===false;
       const isOcc=OCC.includes(e.deviceClass||'');
@@ -1150,7 +1275,7 @@ function renderCard(){
       return `<div class="cell"><span class="label">${isOcc?'Presence':esc(e.name)}</span><strong class="${cls}">${esc(v)}</strong></div>`;
     });
   }).join('');
-  const changed=s.at||Math.max(0,...ds.flatMap(d=>entitiesOf(d.id).map(e=>e.at||0)))||null;
+  const changed=s.at||Math.max(0,...ds.flatMap(d=>cardEntitiesOf(d.id).map(e=>e.at||0)))||null;
   const ops=OPENINGS.filter(o=>o.room===r.id);
   // the header (with the close button) is rebuilt only when the room changes: live readings
   // arrive several times a second, and replacing the button mid-click would swallow the click
@@ -1200,10 +1325,10 @@ function buildTags(){
       sensor?`<span class="bubble">${roomIcon(r)}<span><b>${WORD[s.st]}${s.st==='on'&&typeof s.dist==='number'?' · '+metres(s.dist):''}</b><small>${esc(r.name)}</small></span></span><span class="pin"></span>`
         :`<span class="bubble">${roomIcon(r)}<span>${esc(r.name)}</span></span>`);
   });
-  // an open door or window gets its own bubble, on its floor and from the whole-house view
-  OPENINGS.filter(o=>(o.lv===view||view==='out')&&isAlert(openingState(o).st)).forEach(o=>{
+  // every door or window with a sensor gets its own bubble, open or closed, on its floor and from the whole-house view
+  OPENINGS.filter(o=>(o.lv===view||view==='out')&&openingState(o).st!=='none').forEach(o=>{
     const st=openingState(o).st;
-    addTag('op:'+o.id,ROOM_BY_ID[o.room],o.tagAt,' on',`${o.name}: ${OWORD[st]}`,
+    addTag('op:'+o.id,ROOM_BY_ID[o.room],o.tagAt,isAlert(st)?' on':st==='closed'?' shut':' off',`${o.name}: ${OWORD[st]}`,
       `<span class="bubble">${openingIcon(o,st)}<span><b>${OWORD[st]}</b><small>${esc(o.name)}</small></span></span><span class="pin"></span>`);
   });
   tagEls.forEach((el,k)=>{if(!tagSeen.has(k)){el.remove();tagEls.delete(k);}});
@@ -1282,6 +1407,7 @@ function apply(msg){
     msg.entities.forEach(e=>seen(e.at)); msg.devices.forEach(d=>seen(d.availableAt));
     if(msg.alarm){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   } else if(msg.type==='device'){live.devices.set(msg.device.id,msg.device);seen(msg.device.availableAt);refreshLogSoon();}
+  else if(msg.type==='device-removed'){live.devices.delete(msg.id);refreshLogSoon();}
   else if(msg.type==='entity'){live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);refreshLogSoon();}
   else if(msg.type==='alarm'){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   else if(msg.type==='broker')live.brokerUp=msg.connected;
@@ -1313,7 +1439,7 @@ function loop(now){
     camera.position.lerpVectors(tween.p0,tween.p1,e); controls.target.lerpVectors(tween.q0,tween.q1,e);
     if(k>=1)tween=null;
   }
-  controls.update(); renderer.render(scene,camera);
+  stepLamps(); stepSwings(); controls.update(); renderer.render(scene,camera);
   placeTags(stage.clientWidth,stage.clientHeight);
   // the plan's north is -z: on screen it sits at the camera's azimuth, clockwise from up
   compass.style.transform=`rotate(${controls.getAzimuthalAngle()}rad)`;

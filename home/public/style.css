@@ -142,6 +142,7 @@ button.mini:hover span{color:var(--accent)}
 .facts{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-size:13.5px}
 .facts dt{color:var(--muted)}
 .facts dd{margin:0;font:500 13px var(--f-mono);overflow-wrap:anywhere}
+.facts .facts-group{grid-column:1/-1;margin-top:6px;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase}
 
 /* ---------- alarm page ---------- */
 .actions{display:flex;flex-wrap:wrap;gap:8px}
@@ -257,6 +258,8 @@ button.tool:active img{transform:scale(.88)}
 .tag.on b{color:var(--warm-ink)}
 .tag.on .pin{background:var(--warm);animation:ping 2.4s ease-out infinite}
 .tag.off b{color:var(--muted)}
+.tag.shut b{color:var(--ok)}
+.tag.shut .pin{background:var(--ok);box-shadow:0 0 0 3px #fff,0 0 10px var(--ok)}
 .tag.off .pin{background:var(--off);box-shadow:0 0 0 3px #fff}
 .tag.sel .bubble{box-shadow:var(--glow)}
 .tag.quiet{transform:translate(-50%,-50%)}
@@ -306,3 +309,7 @@ button.tool:active img{transform:scale(.88)}
   .room-card{left:12px;right:auto;bottom:12px;width:auto;max-width:calc(100% - 88px);max-height:calc(100% - 92px)}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.dev-edit-btn{min-height:36px;margin-left:4px}
+.dev-edit{display:grid;gap:12px;margin:4px 0 14px;padding:14px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--glass-hi)}
+.dev-edit label{display:grid;gap:6px}
+.dev-edit select.field{appearance:auto}

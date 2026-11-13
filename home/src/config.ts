@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -15,7 +15,16 @@ interface Layout {
   devices: Record<string, Placement>;
 }
 
-export const layout: Layout = JSON.parse(readFileSync(path.join(root, "layout.json"), "utf8"));
+const layoutPath = process.env.HOME_LAYOUT ?? path.join(root, "layout.json");
+/** Read once at startup; the devices API (PATCH /api/devices/:id) changes it in place and saves it. */
+export const layout: Layout = JSON.parse(readFileSync(layoutPath, "utf8"));
+
+/** Write layout.json back, one device per line like the hand-written file. Written to a temp file first so a crash can't leave half a file. */
+export function saveLayout() {
+  const lines = Object.entries(layout.devices).map(([id, p]) => `    ${JSON.stringify(id)}: ${JSON.stringify(p).replace(/^\{/, "{ ").replace(/\}$/, " }").replace(/":/g, '": ').replace(/,"/g, ', "')}`);
+  writeFileSync(`${layoutPath}.tmp`, `{\n  "devices": {\n${lines.join(",\n")}\n  }\n}\n`);
+  renameSync(`${layoutPath}.tmp`, layoutPath);
+}
 
 export const config = {
   host: process.env.HOME_HOST ?? "127.0.0.1",
@@ -25,6 +34,8 @@ export const config = {
   mqttPassword: process.env.MQTT_PASSWORD ?? "",
   /** Home Assistant discovery prefix. ESPHome publishes here; Zigbee2MQTT does too with `homeassistant: true`. */
   discoveryPrefix: process.env.DISCOVERY_PREFIX ?? "homeassistant",
+  /** Zigbee2MQTT's base topic: renames are sent to <base>/bridge/request/device/rename */
+  z2mBaseTopic: process.env.Z2M_BASE_TOPIC ?? "zigbee2mqtt",
   publicDir: path.join(root, "public"),
   /** home.db (alarm sessions and what the sensors did while armed) */
   dataDir: process.env.HOME_DATA_DIR ?? path.join(root, "data"),

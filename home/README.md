@@ -60,6 +60,7 @@ Each armed stretch is a session (`alarm_sessions`). While one is open, every liv
 curl -X PUT  localhost:8090/api/alarm/periods -H 'content-type: application/json' -d '[{"start":"23:00","end":"07:00"}]'
 curl -X POST localhost:8090/api/alarm/away    -H 'content-type: application/json' -d '{"from":"2026-12-20","to":"2026-12-27","note":"trip"}'
 curl -X POST localhost:8090/api/alarm         -H 'content-type: application/json' -d '{"armed":true}'
+curl -X PATCH localhost:8090/api/devices/0xa4c138117ddcffff -H 'content-type: application/json' -d '{"name":"lobby_plug","label":"Lobby plug","room":"lobby"}'
 ```
 
 ## Run
@@ -83,7 +84,10 @@ Live updates are server-sent events on `/api/events`; `flush_interval -1` sends 
 | Path | What |
 |---|---|
 | `GET /api/state` | floors, devices, entities with their current values |
-| `GET /api/events` | server-sent events: a `snapshot` (with `alarm`), then each `device` / `entity` / `broker` / `alarm` change |
+| `GET /api/events` | server-sent events: a `snapshot` (with `alarm`), then each `device` / `device-removed` / `entity` / `broker` / `alarm` change |
+| `GET /api/devices` | devices with their label, room or opening, and Zigbee IEEE address (`zigbee`, null for ESPHome) |
+| `GET /api/areas` | the room and opening ids a device can be put in, read from the 3D model in `public/app.js` |
+| `PATCH /api/devices/:id` | any of `name` (rename in Zigbee2MQTT; Zigbee devices only), `label`, `room`, `opening` (`null` takes it out; a room clears the opening and back). Saved to `layout.json`, live straight away |
 | `GET /api/alarm` | armed or not, why (`schedule` / `away` / `manual`), any override, the open session, periods and away days |
 | `POST /api/alarm` | `{"armed": bool}`: manual arm or disarm |
 | `DELETE /api/alarm/override` | follow the schedule again |

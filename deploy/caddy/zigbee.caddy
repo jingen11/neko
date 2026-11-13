@@ -1,0 +1,9 @@
+# Zigbee2MQTT web page at https://zigbee.home.je-dev.com.
+# Goes inside the existing *.home.je-dev.com block in /etc/caddy/Caddyfile, above the final
+# `handle { abort }`. The wildcard DNS record and certificate already cover it.
+# Z2M's frontend has no login: Caddy only listens on the Tailscale IP, and Z2M binds to localhost.
+	@zigbee host zigbee.home.je-dev.com
+	handle @zigbee {
+		# the page talks to Z2M over a WebSocket (/api); reverse_proxy passes it through
+		reverse_proxy localhost:8091
+	}
