@@ -1,7 +1,7 @@
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { snapshot, start, subscribe } from "./broker.ts";
-import { addAway, aways, clearOverride, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
+import { addAway, alarms, alarmsSince, aways, clearOverride, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
 import { config } from "./config.ts";
 
 const app = Fastify({ logger: { level: "info" } });
@@ -90,6 +90,24 @@ app.delete<{ Params: { id: number } }>(
   "/api/alarm/away/:id",
   { schema: { params: { type: "object", properties: { id: { type: "integer" } } } } },
   async (req, reply) => (removeAway(req.params.id) ? reply.code(204).send() : reply.code(404).send({ error: "no such away entry" })),
+);
+
+/** Alarms (something turned on, or a board went offline, while armed), newest first. Next page: ?beforeAt=&beforeId= of the last one. */
+app.get<{ Querystring: { limit?: number; beforeAt?: number; beforeId?: number; since?: number } }>(
+  "/api/alarm/alarms",
+  {
+    schema: {
+      querystring: {
+        type: "object",
+        properties: { limit: { type: "integer", minimum: 1, maximum: 200 }, beforeAt: { type: "integer" }, beforeId: { type: "integer" }, since: { type: "integer" } },
+      },
+    },
+  },
+  async (req) => {
+    const { limit, beforeAt, beforeId, since } = req.query;
+    const items = alarms(limit ?? 50, beforeAt !== undefined ? { at: beforeAt, id: beforeId ?? Number.MAX_SAFE_INTEGER } : undefined);
+    return { items, since: since !== undefined ? alarmsSince(since) : null };
+  },
 );
 
 /** Past arming sessions, newest first. */

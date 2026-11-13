@@ -52,6 +52,8 @@ A room glows warm while any online presence sensor in it reads occupied; an offl
 
 Arming or disarming by hand overrides the schedule until the schedule itself next changes. For example, disarming at 23:30 inside a 23:00–07:00 period holds until 07:00. `DELETE /api/alarm/override` goes back to the schedule straight away.
 
+On the dashboard, the **Alarm** tab shows the state, arm/disarm, and the alarms: someone detected, a door or window opening, or a board going offline while armed, newest first by day. The **Settings** tab holds the periods and away days.
+
 Each armed stretch is a session (`alarm_sessions`). While one is open, every live sensor change and every board going online or offline is written to `alarm_events`, with the device's room or opening. Retained values replayed on reconnect aren't logged.
 
 ```bash
@@ -87,6 +89,7 @@ Live updates are server-sent events on `/api/events`; `flush_interval -1` sends 
 | `DELETE /api/alarm/override` | follow the schedule again |
 | `GET`/`PUT /api/alarm/periods` | daily armed periods, replaced as a whole |
 | `GET`/`POST /api/alarm/away`, `DELETE /api/alarm/away/:id` | away days |
+| `GET /api/alarm/alarms?limit=&beforeAt=&beforeId=&since=` | alarms across every armed stretch, newest first (`since` also counts those after that time) |
 | `GET /api/alarm/sessions?limit=` | past armed sessions, newest first |
 | `GET /api/alarm/sessions/:id/events` | what the sensors did during one session |
 | `GET /health` | `{"status":"ok","mqtt":true}` |
