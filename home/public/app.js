@@ -759,6 +759,54 @@ const OWORD={open:'Open',shaking:'Shaking',closed:'Closed',offline:'Offline',unk
 const isAlert=st=>st==='open'||st==='shaking';
 const sensorRooms=()=>ROOMS.filter(r=>devicesIn(r).length);
 
+/* ---------- lights and fans: a wall switch's rockers, a plug's relay ----------
+   Each switch entity (command: true) can be given an appliance in layout.json (device.loads, keyed by the switch's object id). */
+const KIND={light:{name:'Light',icon:'light'},fan:{name:'Fan',icon:'ceiling-fan'}};
+const objOf=e=>e.id.split('/').pop();
+const switchesOf=id=>entitiesOf(id).filter(e=>e.command);
+const loadOf=e=>live.devices.get(e.device)?.loads?.[objOf(e)]||null;
+// "Top", "Center", "Bottom" for an Aqara rocker; a plug's only relay has no name of its own
+const switchName=e=>e.name&&e.name!=='switch'?e.name:'Relay';
+const loadName=e=>{const l=loadOf(e);return l?(l.label||KIND[l.kind]?.name||l.kind):switchName(e);};
+/** switches with an appliance, in placed devices, optionally only one room's */
+const appliances=room=>[...live.devices.values()].filter(d=>ROOM_BY_ID[d.room]&&(!room||d.room===room.id))
+  .flatMap(d=>switchesOf(d.id).filter(loadOf).map(e=>({e,d})))
+  .sort((a,b)=>a.d.room.localeCompare(b.d.room)||loadName(a.e).localeCompare(loadName(b.e)));
+const sw={busy:new Map(),error:null}; // entity id -> when the command went out
+async function flip(id){
+  const e=live.entities.get(id); if(!e||sw.busy.has(id))return;
+  const [node,obj]=[e.id.slice(0,e.id.lastIndexOf('/')),objOf(e)];
+  const t=Date.now(); sw.busy.set(id,t); sw.error=null; render();
+  try{
+    const r=await fetch(`api/switches/${encodeURIComponent(node)}/${encodeURIComponent(obj)}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({on:e.value!==true})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
+    // the button stays busy until the switch reports its new state (apply() clears it), or gives up after a while
+    setTimeout(()=>{if(sw.busy.get(id)===t){sw.busy.delete(id);sw.error=`${loadName(e)} didn’t answer`;render();}},6000);
+  }catch(err){sw.busy.delete(id);sw.error=`${loadName(e)}: ${err.message}`;render();}
+}
+function switchBtn(e,d){
+  const off=d.available===false, on=e.value===true, busy=sw.busy.has(e.id);
+  return `<button class="sw${on?' on':''}" data-sw="${esc(e.id)}" aria-pressed="${on}" aria-label="${esc(loadName(e))}"${off||e.value===null?' disabled':''}>
+    <span class="knob"></span><span class="sw-word">${busy?'…':off?'Offline':e.value===null?'—':on?'On':'Off'}</span></button>`;
+}
+function applianceRow({e,d},showRoom){
+  const l=loadOf(e),on=e.value===true&&d.available!==false;
+  return `<li class="appl"><span class="ico ${on?'on':d.available===false?'off':''}">${IMG(KIND[l.kind]?.icon||'power')}</span>
+    <span class="appl-name"><b>${esc(loadName(e))}</b><small>${showRoom?esc(ROOM_BY_ID[d.room].name)+' · ':''}${esc(d.label)} · ${esc(switchName(e).toLowerCase())}</small></span>
+    ${switchBtn(e,d)}</li>`;
+}
+/* Switch buttons are found by their switch id, not by element: readings redraw the panel up to once a second, and a
+   button replaced between press and release would lose the click. Bound once on the panel and the room card. */
+function bindSwitches(el){
+  let down=null;
+  const at=ev=>{const b=ev.target.closest('[data-sw]');return b&&!b.disabled?b.dataset.sw:null;}; // pointer events reach disabled buttons too
+  el.addEventListener('pointerdown',ev=>{down=ev.button===0?at(ev):null;});
+  el.addEventListener('pointerup',ev=>{const k=at(ev);if(k&&k===down)flip(k);down=null;});
+  // keyboard (Enter, Space) clicks have no pointer
+  el.addEventListener('click',ev=>{const b=ev.target.closest('[data-sw]');if(b&&ev.detail===0)flip(b.dataset.sw);});
+}
+
 /** st: 'on' someone there · 'clear' · 'offline' (every presence sensor offline: its last reading isn't counted)
     · 'unknown' (online, no reading yet) · 'none' (no presence sensor in the room) */
 function roomState(r){
@@ -946,6 +994,7 @@ function overviewHtml(){
       </div>
     </article>
     ${openingsHtml(ops,hot)}
+    ${appliancesHtml()}
     <h2 class="section">Rooms with sensors</h2>
     ${rooms.length?`<ul class="rows">${rows}</ul>`:`<p class="empty">${live.everConnected?'No room has a sensor yet.':'Connecting…'}</p>`}
     ${lost.length?`<p class="empty">Not placed: ${lost.map(d=>`<b>${esc(d.label)}</b>${d.room||d.opening?` (no “${esc(d.room||d.opening)}”)`:''}`).join(', ')}. Give ${lost.length===1?'it':'each'} a <code>room</code> or <code>opening</code> in <code>layout.json</code> and restart the server.</p>`:''}`;
@@ -969,10 +1018,23 @@ function openingsHtml(states,hot){
       <div class="stat"><span class="label">Offline</span><strong>${fitted.length?off.length:'—'}</strong></div>
     </div></article>`;
 }
+function appliancesHtml(){
+  const list=appliances(null);
+  const spare=[...live.devices.values()].filter(d=>ROOM_BY_ID[d.room]).flatMap(d=>switchesOf(d.id).filter(e=>!loadOf(e)));
+  if(!list.length&&!spare.length)return '';
+  const on=list.filter(({e,d})=>e.value===true&&d.available!==false);
+  return `<article class="panel-card">
+    <div class="card-head ${on.length?'on':''}"><span class="ico ${on.length?'on':''}">${IMG('lighting')}</span>
+      <div><span class="label">Lights and fans</span><strong class="big">${list.length?(on.length?`${on.length} on`:'All off'):'None assigned'}</strong>
+      ${list.length?'':`<p class="note">Give each switch an appliance on the Devices tab.</p>`}</div></div>
+    ${list.length?`<ul class="appls">${list.map(a=>applianceRow(a,true)).join('')}</ul>`:''}
+    ${sw.error?`<p class="note err-note" role="alert">${esc(sw.error)}</p>`:''}</article>`;
+}
 /* ---------- editing a device: label it, put it in a room or on a door/window ----------
    (its name is Zigbee2MQTT's or ESPHome's: rename it there). The form's values live here, not in the DOM:
    the Devices tab redraws on every live reading. */
-const edit={id:null,label:'',place:'',busy:false,error:null};
+const edit={id:null,label:'',place:'',loads:{},busy:false,error:null};
+const loadsOf=d=>Object.fromEntries(switchesOf(d.id).map(e=>{const l=loadOf(e);return [objOf(e),{kind:l?.kind||'',label:l?.label||''}];}));
 const placeOf=d=>d.room?`room:${d.room}`:d.opening?`opening:${d.opening}`:'';
 function placeOptions(cur){
   const opt=(v,t)=>`<option value="${v}"${v===cur?' selected':''}>${esc(t)}</option>`;
@@ -989,6 +1051,12 @@ function editHtml(d){
     <label><span class="label">Place</span>
       <select class="field" id="ed-place"${dis}>${placeOptions(edit.place)}</select>
       <small class="note">Presence boards and plugs go in a room; door and window sensors on their door or window.</small></label>
+    ${switchesOf(d.id).map(e=>{const k=objOf(e),v=edit.loads[k]||{kind:'',label:''};
+      return `<fieldset class="load"><legend class="label">${esc(switchName(e))} switch drives</legend>
+        <select class="field" data-load="${esc(k)}" aria-label="${esc(switchName(e))} switch drives"${dis}>
+          ${[['','Nothing'],...Object.entries(KIND).map(([id,x])=>[id,x.name])].map(([id,t])=>`<option value="${id}"${id===v.kind?' selected':''}>${t}</option>`).join('')}</select>
+        <input class="field" data-load-label="${esc(k)}" value="${esc(v.label)}" maxlength="60" placeholder="${esc(KIND[v.kind]?.name||'Name')}, e.g. ${v.kind==='fan'?'Ceiling fan':'Ceiling light'}" aria-label="${esc(switchName(e))} appliance name" autocomplete="off"${dis||(v.kind?'':' disabled')}>
+      </fieldset>`;}).join('')}
     ${edit.error?`<p class="note err-note" role="alert">${esc(edit.error)}</p>`:''}
     <div class="actions"><button class="btn primary" type="submit"${dis}>${edit.busy?'Saving…':'Save'}</button>
       <button class="btn ghost" type="button" data-act="edit-cancel"${dis}>Cancel</button></div>
@@ -999,6 +1067,13 @@ async function saveDevice(d){
   const label=edit.label.trim();
   if(label&&label!==d.label)body.label=label;
   if(edit.place!==placeOf(d)){if(kind==='opening')body.opening=where;else body.room=where;}
+  const was=loadsOf(d),loads={};
+  for(const [k,v] of Object.entries(edit.loads)){
+    const label=v.label.trim();
+    if(v.kind===(was[k]?.kind||'')&&(!v.kind||label===(was[k]?.label||'')))continue;
+    loads[k]=v.kind?(label?{kind:v.kind,label}:{kind:v.kind}):null;
+  }
+  if(Object.keys(loads).length)body.loads=loads;
   if(!Object.keys(body).length){edit.id=null;render();return;}
   edit.busy=true;edit.error=null;render();
   try{
@@ -1012,7 +1087,7 @@ async function saveDevice(d){
 function bindDevices(){
   panel.querySelectorAll('[data-act="edit"]').forEach(b=>b.onclick=()=>{
     const d=live.devices.get(b.dataset.dev); if(!d)return;
-    Object.assign(edit,{id:d.id,label:d.label,place:placeOf(d),busy:false,error:null}); render();
+    Object.assign(edit,{id:d.id,label:d.label,place:placeOf(d),loads:loadsOf(d),busy:false,error:null}); render();
     requestAnimationFrame(()=>panel.querySelector('#ed-label')?.focus());
   });
   panel.querySelectorAll('[data-act="edit-cancel"]').forEach(b=>b.onclick=()=>{edit.id=null;render();});
@@ -1020,6 +1095,13 @@ function bindDevices(){
   const d=live.devices.get(form.dataset.form);
   form.querySelector('#ed-label').addEventListener('input',e=>{edit.label=e.target.value;});
   form.querySelector('#ed-place').addEventListener('change',e=>{edit.place=e.target.value;});
+  form.querySelectorAll('[data-load]').forEach(s=>s.addEventListener('change',e=>{
+    const k=e.target.dataset.load; edit.loads[k]={...edit.loads[k],kind:e.target.value};
+    // the name box enables with a kind; redraw now (the select keeps focus, so a live redraw would wait)
+    const inp=form.querySelector(`[data-load-label="${CSS.escape(k)}"]`); inp.disabled=!e.target.value;
+    inp.placeholder=`${KIND[e.target.value]?.name||'Name'}, e.g. ${e.target.value==='fan'?'Ceiling fan':'Ceiling light'}`;
+  }));
+  form.querySelectorAll('[data-load-label]').forEach(i=>i.addEventListener('input',e=>{const k=e.target.dataset.loadLabel;edit.loads[k]={...edit.loads[k],label:e.target.value};}));
   form.onsubmit=e=>{e.preventDefault(); if(d&&!edit.busy)saveDevice(d);};
 }
 function devicesHtml(){
@@ -1036,12 +1118,14 @@ function devicesHtml(){
       <dl class="facts">
         <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed yet'}</dd>
         ${[false,true].map(diag=>{const es=entitiesOf(d.id).filter(e=>!!e.diagnostic===diag);
-          return (diag&&es.length?'<dt class="facts-group">Diagnostics</dt>':'')+es.map(e=>`<dt>${esc(e.name)}</dt><dd>${esc(formatValue(e))}${e.at?`, ${ago(e.at)}`:''}</dd>`).join('');}).join('')}
+          return (diag&&es.length?'<dt class="facts-group">Diagnostics</dt>':'')+es.map(e=>e.command
+            ?`<dt>${esc(switchName(e))} switch</dt><dd class="sw-fact"><span>${loadOf(e)?`${esc(KIND[loadOf(e).kind]?.name||loadOf(e).kind)}${loadOf(e).label?` · ${esc(loadOf(e).label)}`:''}`:'Not assigned'}</span>${switchBtn(e,d)}</dd>`
+            :`<dt>${esc(e.name)}</dt><dd>${esc(formatValue(e))}${e.at?`, ${ago(e.at)}`:''}</dd>`).join('');}).join('')}
         <dt>IP</dt><dd>${esc(d.ip||'—')}</dd>
         <dt>Board</dt><dd>${esc([d.model,d.firmware&&'ESPHome '+d.firmware].filter(Boolean).join(' · ')||'—')}</dd>
         <dt>${d.available===false?'Offline':'Online'} since</dt><dd>${d.availableAt?`${clockTime(d.availableAt)}, ${ago(d.availableAt)}`:'—'}</dd>
       </dl>
-      ${editing?'':`<div class="actions"><button class="btn ${isPlaced(d)?'':'primary'}" data-act="edit" data-dev="${esc(d.id)}" aria-label="${isPlaced(d)?'Edit':'Place'} ${esc(d.label)}">${isPlaced(d)?'Edit label or place':'Place this device'}</button></div>`}</article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
+      ${editing?'':`<div class="actions"><button class="btn ${isPlaced(d)?'':'primary'}" data-act="edit" data-dev="${esc(d.id)}" aria-label="${isPlaced(d)?'Edit':'Place'} ${esc(d.label)}">${isPlaced(d)?(switchesOf(d.id).length?'Edit label, place or appliances':'Edit label or place'):'Place this device'}</button></div>`}</article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
 }
 /* ---------- alarm page ---------- */
 // status comes live over SSE; the schedule and the alarms are fetched (on opening the page, after each change, and as alarms come in)
@@ -1255,7 +1339,7 @@ function bindAlarm(){
 }
 function renderPanel(){
   // keep keyboard focus across live re-renders
-  const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room):null;
+  const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room||f.dataset?.sw):null;
   if(page==='alarm'||page==='settings'){
     // a form being filled in survives live updates; the page redraws only when its content changes
     const typing=f&&panel.contains(f)&&f.matches('input');
@@ -1277,7 +1361,7 @@ function renderPanel(){
   if(page==='devices')bindDevices();
   panel.querySelectorAll('.row').forEach(b=>b.onclick=()=>{const r=ROOM_BY_ID[b.dataset.id];select(r===sel?null:r);});
   panel.querySelectorAll('.mini[data-room]').forEach(b=>b.onclick=()=>select(ROOM_BY_ID[b.dataset.room]));
-  if(fid)panel.querySelector(`[data-id="${CSS.escape(fid)}"],[data-room="${CSS.escape(fid)}"]`)?.focus();
+  if(fid)panel.querySelector(`[data-id="${CSS.escape(fid)}"],[data-room="${CSS.escape(fid)}"],[data-sw="${CSS.escape(fid)}"]`)?.focus();
 }
 
 /* ---------- the selected room card ---------- */
@@ -1287,7 +1371,7 @@ function renderCard(){
   const r=sel,ds=devicesIn(r),s=roomState(r);
   const cells=ds.flatMap(d=>{
     const off=d.available===false;
-    return cardEntitiesOf(d.id).map(e=>{
+    return cardEntitiesOf(d.id).filter(e=>!e.command).map(e=>{
       // distance only updates while someone is in range, so once the room is clear its last value is stale
       const stale=e===distanceOf(d.id)&&occupancyOf(d.id)?.value===false;
       const isOcc=OCC.includes(e.deviceClass||'');
@@ -1296,7 +1380,7 @@ function renderCard(){
       return `<div class="cell"><span class="label">${isOcc?'Presence':esc(e.name)}</span><strong class="${cls}">${esc(v)}</strong></div>`;
     });
   }).join('');
-  const changed=s.at||Math.max(0,...ds.flatMap(d=>cardEntitiesOf(d.id).map(e=>e.at||0)))||null;
+  const changed=s.at||Math.max(0,...ds.flatMap(d=>cardEntitiesOf(d.id).filter(e=>!e.command).map(e=>e.at||0)))||null;
   const ops=OPENINGS.filter(o=>o.room===r.id);
   // the header (with the close button) is rebuilt only when the room changes: live readings
   // arrive several times a second, and replacing the button mid-click would swallow the click
@@ -1304,7 +1388,7 @@ function renderCard(){
     card.dataset.room=r.id;
     card.innerHTML=`<div class="rc-head"><span class="ico"></span>
       <div><strong>${esc(r.name)}</strong><small>${LVNAME[r.lv]} · ${r.area.toFixed(1)} m²</small></div>
-      <button class="close" aria-label="Close ${esc(r.name)}">${ICON.close}</button></div><div class="rc-body"></div>`;
+      <button class="close" aria-label="Close ${esc(r.name)}">${ICON.close}</button></div><div class="rc-body"></div><div class="rc-sw"></div>`;
     card.querySelector('.ico').innerHTML=roomIcon(r);
     card.querySelector('.close').onclick=()=>select(null);
   }
@@ -1317,6 +1401,15 @@ function renderCard(){
     ${ops.length?`<div class="ops"><span class="label">Doors and windows</span><ul class="minis">${ops.map(o=>{const st=openingState(o).st;
       return `<li class="mini" title="${o.id}"><span>${esc(o.name)}</span><b class="${isAlert(st)?'on':st==='closed'?'ok':''}">${OWORD[st]}</b></li>`;}).join('')}</ul></div>`:''}`;
   if(body._html!==html){body._html=html;body.innerHTML=html;}
+  // lights and fans in their own box: the readings above change every second, these only when switched
+  const list=appliances(r), swEl=card.querySelector('.rc-sw');
+  const swHtml=list.length?`<div class="ops"><span class="label">Lights and fans</span><ul class="appls">${list.map(a=>applianceRow(a,false)).join('')}</ul>
+    ${sw.error?`<p class="note err-note" role="alert">${esc(sw.error)}</p>`:''}</div>`:'';
+  if(swEl._html!==swHtml){
+    const fk=card.contains(document.activeElement)?document.activeElement.dataset?.sw:null;
+    swEl._html=swHtml;swEl.innerHTML=swHtml;
+    if(fk)swEl.querySelector(`[data-sw="${CSS.escape(fk)}"]`)?.focus();
+  }
   card.hidden=false;
 }
 
@@ -1429,7 +1522,10 @@ function apply(msg){
     if(msg.alarm){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   } else if(msg.type==='device'){live.devices.set(msg.device.id,msg.device);seen(msg.device.availableAt);refreshLogSoon();}
   else if(msg.type==='device-removed'){live.devices.delete(msg.id);refreshLogSoon();}
-  else if(msg.type==='entity'){live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);refreshLogSoon();}
+  else if(msg.type==='entity'){
+    const was=live.entities.get(msg.entity.id);
+    if(sw.busy.has(msg.entity.id)&&was?.value!==msg.entity.value)sw.busy.delete(msg.entity.id);
+    live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);refreshLogSoon();}
   else if(msg.type==='alarm'){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   else if(msg.type==='broker')live.brokerUp=msg.connected;
   render();
@@ -1468,6 +1564,7 @@ function loop(now){
 }
 camera.position.set(...PRESET.out.pos); controls.target.set(...PRESET.out.tgt);
 applyVisibility(); markView(); render();
+bindSwitches(panel); bindSwitches(card);
 connect();
 requestAnimationFrame(loop);
 })();

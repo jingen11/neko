@@ -10,6 +10,14 @@ export interface Placement {
   room?: string;
   /** door and window sensors: an opening id (OPENINGS in public/app.js), e.g. "door-front", "win-kitchen-2" */
   opening?: string;
+  /** what each relay of a switch or plug drives, keyed by the switch entity's object id (e.g. "switch_top" for an Aqara rocker) */
+  loads?: Record<string, Load>;
+}
+export const LOAD_KINDS = ["light", "fan"] as const;
+export interface Load {
+  kind: (typeof LOAD_KINDS)[number];
+  /** what the dashboard calls it, e.g. "Ceiling fan"; the kind's name when missing */
+  label?: string;
 }
 interface Layout {
   devices: Record<string, Placement>;
