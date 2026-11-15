@@ -45,7 +45,8 @@ app.get("/api/devices", async () => snapshot().devices);
  *   label    what the dashboard calls it
  *   room     a room id from /api/areas, or null to take it out (clears opening)
  *   opening  a door or window id from /api/areas, or null (clears room)
- *   loads    what its switches drive, by the switch's object id: {"switch_top": {"kind":"light","label":"Ceiling light"}, "switch_center": null}
+ *   loads    what its switches drive, by the switch's object id: {"switch_top": {"kind":"light","label":"Ceiling light"}, "switch_center": null};
+ *            each may name its own "room" when it isn't in the switch's
  *            (null forgets one; switches left out keep theirs)
  * e.g. PATCH /api/devices/lobby_plug {"label":"Lobby plug","room":"lobby"}
  * Saved to layout.json; the page updates straight away. The device's name (its id) belongs to Zigbee2MQTT or ESPHome:
@@ -69,7 +70,11 @@ app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null
               type: ["object", "null"],
               required: ["kind"],
               additionalProperties: false,
-              properties: { kind: { type: "string", enum: [...LOAD_KINDS] }, label: { type: "string", minLength: 1, maxLength: 60 } },
+              properties: {
+                kind: { type: "string", enum: [...LOAD_KINDS] },
+                label: { type: "string", minLength: 1, maxLength: 60 },
+                room: { type: "string" },
+              },
             },
           },
         },
@@ -91,6 +96,8 @@ app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null
     const badLoad = Object.keys(b.loads ?? {}).find((k) => !switches.has(k));
     if (badLoad !== undefined)
       return reply.code(400).send({ error: `"${id}" has no switch "${badLoad}"${switches.size ? ` (it has ${[...switches].join(", ")})` : ""}` });
+    const badRoom = Object.values(b.loads ?? {}).find((l) => l?.room && !isRoom(l.room))?.room;
+    if (badRoom) return reply.code(400).send({ error: `unknown room "${badRoom}" (see GET /api/areas)` });
 
     const p = { ...(layout.devices[id] ?? { label: device(id)?.label ?? id }) };
     if (b.label !== undefined) p.label = b.label;
@@ -107,7 +114,7 @@ app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null
     if (b.loads) {
       const loads = { ...p.loads };
       for (const [k, v] of Object.entries(b.loads)) {
-        if (v) loads[k] = v.label?.trim() ? { kind: v.kind, label: v.label.trim() } : { kind: v.kind };
+        if (v) loads[k] = { kind: v.kind, ...(v.label?.trim() ? { label: v.label.trim() } : {}), ...(v.room ? { room: v.room } : {}) };
         else delete loads[k];
       }
       if (Object.keys(loads).length) p.loads = loads;

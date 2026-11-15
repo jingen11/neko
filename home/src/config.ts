@@ -18,6 +18,8 @@ export interface Load {
   kind: (typeof LOAD_KINDS)[number];
   /** what the dashboard calls it, e.g. "Ceiling fan"; the kind's name when missing */
   label?: string;
+  /** the room it's in, when not the switch's own (a lobby light on the living room's switch); a room id like Placement.room */
+  room?: string;
 }
 interface Layout {
   devices: Record<string, Placement>;

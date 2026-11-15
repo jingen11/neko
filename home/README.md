@@ -43,14 +43,16 @@ Panels count from the lower x (west) or lower z (front) end of the window. Each 
 
 ## Lights and fans
 
-Each switch can be given the appliance it drives, a `light` or a `fan`, with an optional name. Set it on the **Devices** tab (**Edit label, place or appliances**), or in `layout.json` under `loads`, keyed by the switch's object id (the end of its entity id: `switch_top`, `switch_center`, `switch_bottom` on an Aqara Z1 triple rocker, `switch` on a plug):
+Each switch can be given the appliance it drives, a `light` or a `fan`, with an optional name and its own `room` when it isn't in the switch's (a lobby light wired to the living room's switch). Set it on the **Devices** tab (**Edit label, place or appliances**), or in `layout.json` under `loads`, keyed by the switch's object id (the end of its entity id: `switch_top`, `switch_center`, `switch_bottom` on an Aqara Z1 triple rocker, `switch` on a plug):
 
 ```json
 "g_floor_living_gang_1": { "label": "Living room switch", "room": "living",
-  "loads": { "switch_top": { "kind": "light", "label": "Ceiling light" }, "switch_center": { "kind": "fan" } } }
+  "loads": { "switch_top": { "kind": "light", "label": "Lobby light", "room": "lobby" }, "switch_center": { "kind": "fan" } } }
 ```
 
-Assigned appliances in a placed device are listed under **Lights and fans** on the overview and in their room's card, each with an on/off button. A button shows the new state only once the switch reports it. Switches never count toward the alarm.
+Assigned appliances are listed under **Lights and fans** on the overview and in their room's card, each with an on/off button. A button shows the new state only once the switch reports it. Switches never count toward the alarm.
+
+In the 3D house, a room with a light gets a ceiling lamp that's lit while the light is on; a room with a fan gets a ceiling fan that spins while it runs (still, with an orange ring under the hub, under reduced motion). A room with a presence sensor and no light assigned keeps its lamp for presence; with a light assigned, presence shows only as the warm floor.
 
 A room glows warm while any online presence sensor in it reads occupied; an offline board's last reading is never counted. A device that isn't placed (or names a room that doesn't exist) is listed under **Not placed** in the side panel. Restart after editing.
 
