@@ -1,9 +1,9 @@
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
-import { device, place, snapshot, start, subscribe } from "./broker.ts";
+import { command, device, entity, place, snapshot, start, subscribe } from "./broker.ts";
 import { isOpening, isRoom, openings, rooms } from "./areas.ts";
 import { addAway, alarms, alarmsSince, aways, clearOverride, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
-import { config, layout, saveLayout } from "./config.ts";
+import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -45,11 +45,13 @@ app.get("/api/devices", async () => snapshot().devices);
  *   label    what the dashboard calls it
  *   room     a room id from /api/areas, or null to take it out (clears opening)
  *   opening  a door or window id from /api/areas, or null (clears room)
+ *   loads    what its switches drive, by the switch's object id: {"switch_top": {"kind":"light","label":"Ceiling light"}, "switch_center": null}
+ *            (null forgets one; switches left out keep theirs)
  * e.g. PATCH /api/devices/lobby_plug {"label":"Lobby plug","room":"lobby"}
  * Saved to layout.json; the page updates straight away. The device's name (its id) belongs to Zigbee2MQTT or ESPHome:
  * rename it there; a Zigbee2MQTT rename carries its readings and its place in layout.json over to the new name.
  */
-app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null; opening?: string | null } }>(
+app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null; opening?: string | null; loads?: Record<string, Load | null> } }>(
   "/api/devices/:id",
   {
     schema: {
@@ -61,6 +63,15 @@ app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null
           label: { type: "string", minLength: 1, maxLength: 60 },
           room: { type: ["string", "null"] },
           opening: { type: ["string", "null"] },
+          loads: {
+            type: "object",
+            additionalProperties: {
+              type: ["object", "null"],
+              required: ["kind"],
+              additionalProperties: false,
+              properties: { kind: { type: "string", enum: [...LOAD_KINDS] }, label: { type: "string", minLength: 1, maxLength: 60 } },
+            },
+          },
         },
       },
     },
@@ -71,11 +82,15 @@ app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null
     const d = device(id);
     if (!d) return reply.code(404).send({ error: `no device "${id}" (see GET /api/devices)` });
     // unknown fields (e.g. "name": renames happen in Zigbee2MQTT) are stripped by validation, which can leave nothing
-    if (b.label === undefined && b.room === undefined && b.opening === undefined)
-      return reply.code(400).send({ error: "nothing to change: send label, room or opening (rename the device in Zigbee2MQTT)" });
+    if (b.label === undefined && b.room === undefined && b.opening === undefined && b.loads === undefined)
+      return reply.code(400).send({ error: "nothing to change: send label, room, opening or loads (rename the device in Zigbee2MQTT)" });
     if (b.room && b.opening) return reply.code(400).send({ error: "a device goes in a room or on an opening, not both" });
     if (b.room && !isRoom(b.room)) return reply.code(400).send({ error: `unknown room "${b.room}" (see GET /api/areas)` });
     if (b.opening && !isOpening(b.opening)) return reply.code(400).send({ error: `unknown opening "${b.opening}" (see GET /api/areas)` });
+    const switches = new Set(snapshot().entities.filter((e) => e.device === id && e.command).map((e) => e.id.split("/").at(-1)));
+    const badLoad = Object.keys(b.loads ?? {}).find((k) => !switches.has(k));
+    if (badLoad !== undefined)
+      return reply.code(400).send({ error: `"${id}" has no switch "${badLoad}"${switches.size ? ` (it has ${[...switches].join(", ")})` : ""}` });
 
     const p = { ...(layout.devices[id] ?? { label: device(id)?.label ?? id }) };
     if (b.label !== undefined) p.label = b.label;
@@ -89,10 +104,36 @@ app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null
       else delete p.opening;
       if (b.opening) delete p.room;
     }
+    if (b.loads) {
+      const loads = { ...p.loads };
+      for (const [k, v] of Object.entries(b.loads)) {
+        if (v) loads[k] = v.label?.trim() ? { kind: v.kind, label: v.label.trim() } : { kind: v.kind };
+        else delete loads[k];
+      }
+      if (Object.keys(loads).length) p.loads = loads;
+      else delete p.loads;
+    }
     layout.devices[id] = p;
     saveLayout();
     place(id);
     return device(id);
+  },
+);
+
+/**
+ * Turn a switch (a wall switch rocker, a plug) on or off: POST /api/switches/0x54ef44100196dcde/switch_top {"on": true}.
+ * The id is an entity id from /api/state with `command: true`. Answers once the command is sent; the new state
+ * arrives on /api/events when the device reports it.
+ */
+app.post<{ Params: { node: string; object: string }; Body: { on: boolean } }>(
+  "/api/switches/:node/:object",
+  { schema: { body: { type: "object", required: ["on"], additionalProperties: false, properties: { on: { type: "boolean" } } } } },
+  async (req, reply) => {
+    const id = `${req.params.node}/${req.params.object}`;
+    const r = await command(id, req.body.on);
+    if (r === "unknown") return reply.code(404).send({ error: `no switch "${id}" (see GET /api/state, entities with command: true)` });
+    if (r === "offline") return reply.code(409).send({ error: "the switch or the MQTT broker is offline" });
+    return reply.code(202).send(entity(id));
   },
 );
 

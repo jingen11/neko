@@ -4,7 +4,7 @@ The house at a glance on https://dash.home.je-dev.com: a 3D twin of the house (T
 
 ## What it reads
 
-Nothing is hard-coded per sensor. The server subscribes to Home Assistant MQTT discovery (`homeassistant/#`), which ESPHome publishes for every sensor, and builds the device list from that. Zigbee2MQTT devices show up the same way once its `homeassistant` option is on. Shown for now: `sensor` and `binary_sensor` entities.
+Nothing is hard-coded per sensor. The server subscribes to Home Assistant MQTT discovery (`homeassistant/#`), which ESPHome publishes for every sensor, and builds the device list from that. Zigbee2MQTT devices show up the same way once its `homeassistant` option is on. Shown: `sensor` and `binary_sensor` entities, and `switch` entities (a wall switch's rockers, a plug's relay) that can be turned on and off. A switch's settings (`entity_category: config`, such as an Aqara rocker's *lock relay*) and Zigbee2MQTT's *permit join* are left out.
 
 - Online / offline comes from each entity's availability topic (`<board>/status`). An offline board's last reading is never counted as someone being there.
 - `esphome/discover/<board>` gives each board's IP.
@@ -41,6 +41,17 @@ Door and window sensors (Zigbee contact or vibration sensors, once Zigbee2MQTT r
 
 Panels count from the lower x (west) or lower z (front) end of the window. Each opening has a small sensor mark on its head: grey with no sensor, green closed, orange open (the whole opening is tinted then too, and gets a bubble).
 
+## Lights and fans
+
+Each switch can be given the appliance it drives, a `light` or a `fan`, with an optional name. Set it on the **Devices** tab (**Edit label, place or appliances**), or in `layout.json` under `loads`, keyed by the switch's object id (the end of its entity id: `switch_top`, `switch_center`, `switch_bottom` on an Aqara Z1 triple rocker, `switch` on a plug):
+
+```json
+"g_floor_living_gang_1": { "label": "Living room switch", "room": "living",
+  "loads": { "switch_top": { "kind": "light", "label": "Ceiling light" }, "switch_center": { "kind": "fan" } } }
+```
+
+Assigned appliances in a placed device are listed under **Lights and fans** on the overview and in their room's card, each with an on/off button. A button shows the new state only once the switch reports it. Switches never count toward the alarm.
+
 A room glows warm while any online presence sensor in it reads occupied; an offline board's last reading is never counted. A device that isn't placed (or names a room that doesn't exist) is listed under **Not placed** in the side panel. Restart after editing.
 
 ## Alarm
@@ -61,6 +72,7 @@ curl -X PUT  localhost:8090/api/alarm/periods -H 'content-type: application/json
 curl -X POST localhost:8090/api/alarm/away    -H 'content-type: application/json' -d '{"from":"2026-12-20","to":"2026-12-27","note":"trip"}'
 curl -X POST localhost:8090/api/alarm         -H 'content-type: application/json' -d '{"armed":true}'
 curl -X PATCH localhost:8090/api/devices/ground_floor_smart_plug -H 'content-type: application/json' -d '{"label":"Lobby plug","room":"lobby"}'
+curl -X POST  localhost:8090/api/switches/0x54ef44100196dcde/switch_top -H 'content-type: application/json' -d '{"on":true}'
 ```
 
 ## Run
@@ -87,7 +99,8 @@ Live updates are server-sent events on `/api/events`; `flush_interval -1` sends 
 | `GET /api/events` | server-sent events: a `snapshot` (with `alarm`), then each `device` / `device-removed` / `entity` / `broker` / `alarm` change |
 | `GET /api/devices` | devices with their label, room or opening, and Zigbee IEEE address (`zigbee`, null for ESPHome) |
 | `GET /api/areas` | the room and opening ids a device can be put in, read from the 3D model in `public/app.js` |
-| `PATCH /api/devices/:id` | any of `label`, `room`, `opening` (`null` takes it out; a room clears the opening and back). Saved to `layout.json`, live straight away. Rename a device in Zigbee2MQTT or ESPHome, not here |
+| `PATCH /api/devices/:id` | any of `label`, `room`, `opening` (`null` takes it out; a room clears the opening and back), `loads` (`{"switch_top": {"kind": "light", "label": "…"}, "switch_center": null}`: `null` forgets one, switches left out keep theirs). Saved to `layout.json`, live straight away. Rename a device in Zigbee2MQTT or ESPHome, not here |
+| `POST /api/switches/:node/:object` | `{"on": bool}`: turn a switch (an entity with `command: true`) on or off. `202` once sent; the new state follows on `/api/events`. `409` while the switch or broker is offline |
 | `GET /api/alarm` | armed or not, why (`schedule` / `away` / `manual`), any override, the open session, periods and away days |
 | `POST /api/alarm` | `{"armed": bool}`: manual arm or disarm |
 | `DELETE /api/alarm/override` | follow the schedule again |

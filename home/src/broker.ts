@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import mqtt, { type MqttClient } from "mqtt";
-import { config, layout, saveLayout } from "./config.ts";
+import { config, layout, saveLayout, type Load } from "./config.ts";
 
 /**
  * Nothing is stored: only the latest value of each entity is kept in memory and streamed to the page.
@@ -27,12 +27,14 @@ export interface Device {
   available: boolean | null;
   /** when it went online/offline, if that happened while we were connected */
   availableAt: number | null;
+  /** what each of its switches drives (a light, a fan), from layout.json; keyed by the switch's object id, e.g. "switch_top" */
+  loads: Record<string, Load>;
 }
 
 export interface Entity {
   id: string; // "<node>/<object>", e.g. "presence-gf/distance"
   device: string;
-  component: string; // binary_sensor, sensor, ...
+  component: string; // binary_sensor, sensor, switch
   name: string;
   deviceClass: string | null;
   unit: string | null;
@@ -41,6 +43,8 @@ export interface Entity {
   at: number | null;
   /** Zigbee2MQTT marks battery, voltage, link quality and the like as `entity_category: diagnostic` */
   diagnostic: boolean;
+  /** a switch the page can turn on and off (POST /api/switches/:node/:object) */
+  command: boolean;
 }
 
 export type Update =
@@ -56,6 +60,8 @@ interface Binding {
   jsonPath: string[] | null; // from a value_template like "{{ value_json.temperature }}" or "{{ value_json.coordinator.meta.revision }}"
   payloadOn: string;
   payloadOff: string;
+  /** a switch's command topic; it takes payloadOn / payloadOff */
+  commandTopic: string | null;
 }
 
 // Discovery messages may use abbreviated keys (ESPHome does).
@@ -68,6 +74,7 @@ const ABBR: Record<string, string> = {
   val_tpl: "value_template",
   pl_on: "payload_on",
   pl_off: "payload_off",
+  cmd_t: "command_topic",
   pl_avail: "payload_available",
   pl_not_avail: "payload_not_available",
   dev: "device",
@@ -103,6 +110,7 @@ const str = (v: unknown) => (typeof v === "string" && v ? v : null);
 const devices = new Map<string, Device>();
 const entities = new Map<string, Entity>();
 const byStateTopic = new Map<string, Binding[]>();
+const bindingOf = new Map<string, Binding>();
 interface AvailTopic {
   devices: Set<string>;
   on: string;
@@ -140,7 +148,7 @@ function ensureDevice(id: string, info: Json | null): Device {
   let d = devices.get(id);
   if (!d) {
     const place = layout.devices[id];
-    d = { id, label: place?.label ?? id, room: place?.room ?? null, opening: place?.opening ?? null, model: null, firmware: null, zigbee: null, ip: ipByName.get(id) ?? null, available: null, availableAt: null };
+    d = { id, label: place?.label ?? id, room: place?.room ?? null, opening: place?.opening ?? null, model: null, firmware: null, zigbee: null, ip: ipByName.get(id) ?? null, available: null, availableAt: null, loads: place?.loads ?? {} };
     devices.set(id, d);
   }
   if (info) {
@@ -158,7 +166,8 @@ function onDiscovery(topic: string, payload: string) {
   const parts = topic.slice(config.discoveryPrefix.length + 1).split("/");
   if (parts.at(-1) !== "config" || parts.length < 3) return;
   const component = parts[0];
-  if (!["sensor", "binary_sensor"].includes(component)) return; // read-only dashboard for now
+  // sensors, plus switches (a wall switch's rockers, a plug's relay) so the page can show and turn on lights and fans
+  if (!["sensor", "binary_sensor", "switch"].includes(component)) return;
   const node = parts.length >= 4 ? parts[1] : null;
   const object = parts.at(-2)!;
   if (!payload) return; // an empty config removes the entity; keep it simple and leave it until restart
@@ -171,6 +180,11 @@ function onDiscovery(topic: string, payload: string) {
   }
   const stateTopic = str(c.state_topic);
   if (!stateTopic) return;
+  // a switch's settings (an Aqara rocker's "lock relay", its night LED) are `entity_category: config`: not an appliance
+  if (component === "switch" && c.entity_category) return;
+  // nor is Zigbee2MQTT's own "permit join"
+  const bridge = [(c.device as Json | undefined)?.identifiers].flat().some((x) => str(x)?.startsWith("zigbee2mqtt_bridge_"));
+  if (component === "switch" && bridge) return;
   const dev = (c.device as Json | undefined) ?? null;
   const deviceId = str(dev?.name) ?? node ?? object;
   const device = ensureDevice(deviceId, dev);
@@ -182,6 +196,7 @@ function onDiscovery(topic: string, payload: string) {
     deviceClass: str(c.device_class),
     unit: str(c.unit_of_measurement),
     diagnostic: c.entity_category === "diagnostic",
+    command: component === "switch" && !!str(c.command_topic),
   };
   const existing = entities.get(id);
   const entity: Entity = existing ? Object.assign(existing, meta) : { id, device: device.id, ...meta, value: null, at: null };
@@ -209,7 +224,9 @@ function onDiscovery(topic: string, payload: string) {
     // Zigbee2MQTT sends booleans here (a contact sensor: payload_on false, since contact true means closed)
     payloadOn: c.payload_on !== undefined && c.payload_on !== null ? String(c.payload_on) : "ON",
     payloadOff: c.payload_off !== undefined && c.payload_off !== null ? String(c.payload_off) : "OFF",
+    commandTopic: component === "switch" ? str(c.command_topic) : null,
   };
+  bindingOf.set(id, binding);
   const list = (byStateTopic.get(stateTopic) ?? []).filter((b) => b.entity.id !== id);
   list.push(binding);
   if (!byStateTopic.has(stateTopic)) client?.subscribe(stateTopic);
@@ -268,10 +285,24 @@ export function place(id: string) {
   d.label = p?.label ?? id;
   d.room = p?.room ?? null;
   d.opening = p?.opening ?? null;
+  d.loads = p?.loads ?? {};
   emit({ type: "device", device: d });
 }
 
 export const device = (id: string) => devices.get(id) ?? null;
+export const entity = (id: string) => entities.get(id) ?? null;
+
+/**
+ * Turn a switch on or off by publishing to its command topic. The new state comes back on the state topic
+ * like any other reading, so the page only changes once the device has actually switched.
+ */
+export async function command(id: string, on: boolean): Promise<"ok" | "unknown" | "offline"> {
+  const b = bindingOf.get(id);
+  if (!b?.commandTopic) return "unknown";
+  if (!client || !connected || devices.get(b.entity.device)?.available === false) return "offline";
+  await client.publishAsync(b.commandTopic, on ? b.payloadOn : b.payloadOff);
+  return "ok";
+}
 
 function dropIfEmpty(id: string) {
   for (const e of entities.values()) if (e.device === id) return;
@@ -288,7 +319,7 @@ function parse(b: Binding, text: string): number | string | boolean | null {
     if (raw === undefined) return null; // this message is about other fields
     if (raw !== null && typeof raw === "object") return null; // the template points at a whole object, not a value
   }
-  if (b.entity.component === "binary_sensor") {
+  if (b.entity.component === "binary_sensor" || b.entity.component === "switch") {
     const s = String(raw);
     if (s === b.payloadOn) return true;
     if (s === b.payloadOff) return false;
