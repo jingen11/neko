@@ -310,6 +310,7 @@ button.tool:active img{transform:scale(.88)}
 .facts dd.sw-fact{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .dev-edit fieldset.load{margin:0;padding:0;border:0;display:grid;grid-template-columns:minmax(0,9rem) minmax(0,1fr);gap:6px 8px;min-width:0}
 .dev-edit fieldset.load legend{grid-column:1/-1;padding:0;margin-bottom:6px}
+.dev-edit fieldset.load .wide{grid-column:1/-1}
 .dev-edit .field:disabled{background:var(--glass-hi);color:var(--off)}
 @media (max-width:420px){.dev-edit fieldset.load{grid-template-columns:minmax(0,1fr)}}
 

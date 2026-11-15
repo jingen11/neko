@@ -768,10 +768,14 @@ const loadOf=e=>live.devices.get(e.device)?.loads?.[objOf(e)]||null;
 // "Top", "Center", "Bottom" for an Aqara rocker; a plug's only relay has no name of its own
 const switchName=e=>e.name&&e.name!=='switch'?e.name:'Relay';
 const loadName=e=>{const l=loadOf(e);return l?(l.label||KIND[l.kind]?.name||l.kind):switchName(e);};
-/** switches with an appliance, in placed devices, optionally only one room's */
-const appliances=room=>[...live.devices.values()].filter(d=>ROOM_BY_ID[d.room]&&(!room||d.room===room.id))
-  .flatMap(d=>switchesOf(d.id).filter(loadOf).map(e=>({e,d})))
-  .sort((a,b)=>a.d.room.localeCompare(b.d.room)||loadName(a.e).localeCompare(loadName(b.e)));
+/** the room an appliance is in: its own (a lobby light on the living room's switch), else its switch's */
+const loadRoom=(e,d)=>ROOM_BY_ID[loadOf(e)?.room]||ROOM_BY_ID[d.room]||null;
+/** switches with an appliance in a room, optionally only one room's: [{e, d, r}] */
+const appliances=room=>[...live.devices.values()]
+  .flatMap(d=>switchesOf(d.id).filter(loadOf).map(e=>({e,d,r:loadRoom(e,d)})))
+  .filter(a=>a.r&&(!room||a.r===room))
+  .sort((a,b)=>a.r.name.localeCompare(b.r.name)||loadName(a.e).localeCompare(loadName(b.e)));
+const isRunning=a=>a.e.value===true&&a.d.available!==false;
 const sw={busy:new Map(),error:null}; // entity id -> when the command went out
 async function flip(id){
   const e=live.entities.get(id); if(!e||sw.busy.has(id))return;
@@ -790,10 +794,10 @@ function switchBtn(e,d){
   return `<button class="sw${on?' on':''}" data-sw="${esc(e.id)}" aria-pressed="${on}" aria-label="${esc(loadName(e))}"${off||e.value===null?' disabled':''}>
     <span class="knob"></span><span class="sw-word">${busy?'…':off?'Offline':e.value===null?'—':on?'On':'Off'}</span></button>`;
 }
-function applianceRow({e,d},showRoom){
+function applianceRow({e,d,r},showRoom){
   const l=loadOf(e),on=e.value===true&&d.available!==false;
   return `<li class="appl"><span class="ico ${on?'on':d.available===false?'off':''}">${IMG(KIND[l.kind]?.icon||'power')}</span>
-    <span class="appl-name"><b>${esc(loadName(e))}</b><small>${showRoom?esc(ROOM_BY_ID[d.room].name)+' · ':''}${esc(d.label)} · ${esc(switchName(e).toLowerCase())}</small></span>
+    <span class="appl-name"><b>${esc(loadName(e))}</b><small>${showRoom?esc(r.name)+' · ':''}${esc(d.label)} · ${esc(switchName(e).toLowerCase())}</small></span>
     ${switchBtn(e,d)}</li>`;
 }
 /* Switch buttons are found by their switch id, not by element: readings redraw the panel up to once a second, and a
@@ -891,8 +895,9 @@ function select(r){
 }
 // occupied rooms glow cat-orange on their floor; selection and hover use the accent
 const C_ACC=new THREE.Color(0x0a84ff),C_WARM=new THREE.Color(0xf39a38);
-/* a ceiling lamp in every room with a presence sensor: lit while someone is there.
-   Made on first use, so the light count (which recompiles materials) only changes when a board appears. */
+/* a ceiling lamp in every room with a light assigned to a switch (lit while it's on), or else with a presence
+   sensor (lit while someone is there). Made on first use, so the light count (which recompiles materials) only
+   changes when a board or an appliance appears. */
 const C_BULB_ON=new THREE.Color(0xffd08a),C_BULB_OFF=new THREE.Color(0x9aa3ad);
 const lamps=[];
 function lampOf(r){
@@ -906,10 +911,54 @@ function lampOf(r){
   // in the scene itself (metres), not a floor group: a hidden group would drop the light and recompile materials
   const light=new THREE.PointLight(0xffc27a,0,Math.max(4,r.span/100*1.4),1.6);
   light.position.set(x/100,(y-10)/100,z/100); scene.add(light);
-  r.lamp={r,bulb,halo,light,target:0,k:0}; lamps.push(r.lamp);
+  r.lamp={r,bulb,halo,cord,light,target:0,k:0}; lamps.push(r.lamp);
   return r.lamp;
 }
 const LAMP_MAX=2.4;
+function moveLamp(l,x,z){
+  const y=l.bulb.position.y;
+  l.bulb.position.set(x,y,z); l.halo.position.set(x,y,z); l.cord.position.set(x,y+15,z); l.light.position.set(x/100,(y-10)/100,z/100);
+}
+/* a ceiling fan in every room with a fan assigned to a switch: spins up while it's on and runs down when it's off.
+   With reduced motion the blades stay still; the ring under the hub shows on or off either way. */
+const C_FAN_ON=new THREE.Color(0xf39a38),C_FAN_OFF=new THREE.Color(0x9aa3ad);
+const fans=[];
+function fanOf(r){
+  if(r.fan)return r.fan;
+  const metal=std(0xeef0f2,{roughness:.45,metalness:.25}), wood=std(0x9b7653,{roughness:.7});
+  const grp=new THREE.Group();
+  const rod=new THREE.Mesh(new THREE.CylinderGeometry(1.5,1.5,26,8),metal); rod.position.y=-13;
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(11,9,10,20),metal); hub.position.y=-31;
+  const ring=new THREE.Mesh(new THREE.CylinderGeometry(7,7,1.5,20),new THREE.MeshBasicMaterial({color:C_FAN_OFF.clone()})); ring.position.y=-36.5;
+  const rotor=new THREE.Group(); rotor.position.y=-31;
+  for(let i=0;i<4;i++){
+    const arm=new THREE.Group(); arm.rotation.y=i*Math.PI/2;
+    const blade=new THREE.Mesh(new THREE.BoxGeometry(56,1.2,13),wood); blade.position.x=40; blade.rotation.x=.18; // a little pitch
+    arm.add(blade); rotor.add(arm);
+  }
+  grp.add(rod,hub,ring,rotor); grp.position.set(r.c[0],(r.lv==='u'?UB:0)+H-4,r.c[1]);
+  (r.lv==='u'?G.u:G.g).add(grp); // hidden with its floor
+  r.fan={r,grp,rotor,ring,target:0,k:0}; fans.push(r.fan);
+  return r.fan;
+}
+function stepFans(dt){
+  fans.forEach(f=>{
+    f.k+=(f.target-f.k)*Math.min(1,dt*1.2); if(Math.abs(f.target-f.k)<.002)f.k=f.target; // a couple of seconds to spin up or run down
+    if(!noMotion.matches)f.rotor.rotation.y-=f.k*dt*2*Math.PI*1.3;
+    f.ring.material.color.copy(C_FAN_OFF).lerp(C_FAN_ON,f.target);
+  });
+}
+/** a room with both a lamp and a fan: one each side of the middle, along the room's long side */
+function placeFixtures(r){
+  if(!r.fan&&!r.lamp)return;
+  let off=[0,0];
+  if(r.fan&&r.lamp){
+    const xs=r.p.map(q=>q[0]),zs=r.p.map(q=>q[1]),w=Math.max(...xs)-Math.min(...xs),d=Math.max(...zs)-Math.min(...zs);
+    const k=Math.min(.22*Math.max(w,d),110); off=w>d?[k,0]:[0,k];
+  }
+  if(r.lamp)moveLamp(r.lamp,r.c[0]-off[0],r.c[1]-off[1]);
+  if(r.fan)r.fan.grp.position.set(r.c[0]+off[0],r.fan.grp.position.y,r.c[1]+off[1]);
+}
 function stepLamps(){
   lamps.forEach(l=>{
     l.k+=(l.target-l.k)*.12; if(Math.abs(l.target-l.k)<.002)l.k=l.target;
@@ -921,10 +970,16 @@ function stepLamps(){
 function paint(){
   ROOMS.forEach(r=>{
     const on=roomState(r).st==='on';
-    if(devicesIn(r).some(d=>occupancyOf(d.id))){
-      // the ground-floor view hides the upper floor: its lamps would light the rooms below through the missing slab
-      lampOf(r).target=on&&!(view==='g'&&r.lv==='u')?1:0;
-    }
+    // the ground-floor view hides the upper floor: its lamps would light the rooms below through the missing slab
+    const hidden=view==='g'&&r.lv==='u';
+    const here=appliances(r), lights=here.filter(a=>loadOf(a.e).kind==='light'), fansHere=here.filter(a=>loadOf(a.e).kind==='fan');
+    if(lights.length)lampOf(r).target=lights.some(isRunning)&&!hidden?1:0;
+    else if(devicesIn(r).some(d=>occupancyOf(d.id)))lampOf(r).target=on&&!hidden?1:0;
+    else if(r.lamp)r.lamp.target=0;
+    if(fansHere.length)fanOf(r).target=fansHere.some(isRunning)?1:0;
+    else if(r.fan)r.fan.target=0;
+    if(r.fan)r.fan.grp.visible=fansHere.length>0;
+    placeFixtures(r);
     r.mesh.material.color.copy(on?C_WARM:C_ACC);
     r.mesh.material.opacity=r===sel?(on?.5:.3):r===hover?(on?.42:.14):on?.32:0;
   });
@@ -1022,7 +1077,7 @@ function appliancesHtml(){
   const list=appliances(null);
   const spare=[...live.devices.values()].filter(d=>ROOM_BY_ID[d.room]).flatMap(d=>switchesOf(d.id).filter(e=>!loadOf(e)));
   if(!list.length&&!spare.length)return '';
-  const on=list.filter(({e,d})=>e.value===true&&d.available!==false);
+  const on=list.filter(isRunning);
   return `<article class="panel-card">
     <div class="card-head ${on.length?'on':''}"><span class="ico ${on.length?'on':''}">${IMG('lighting')}</span>
       <div><span class="label">Lights and fans</span><strong class="big">${list.length?(on.length?`${on.length} on`:'All off'):'None assigned'}</strong>
@@ -1034,7 +1089,7 @@ function appliancesHtml(){
    (its name is Zigbee2MQTT's or ESPHome's: rename it there). The form's values live here, not in the DOM:
    the Devices tab redraws on every live reading. */
 const edit={id:null,label:'',place:'',loads:{},busy:false,error:null};
-const loadsOf=d=>Object.fromEntries(switchesOf(d.id).map(e=>{const l=loadOf(e);return [objOf(e),{kind:l?.kind||'',label:l?.label||''}];}));
+const loadsOf=d=>Object.fromEntries(switchesOf(d.id).map(e=>{const l=loadOf(e);return [objOf(e),{kind:l?.kind||'',label:l?.label||'',room:l?.room||''}];}));
 const placeOf=d=>d.room?`room:${d.room}`:d.opening?`opening:${d.opening}`:'';
 function placeOptions(cur){
   const opt=(v,t)=>`<option value="${v}"${v===cur?' selected':''}>${esc(t)}</option>`;
@@ -1051,11 +1106,13 @@ function editHtml(d){
     <label><span class="label">Place</span>
       <select class="field" id="ed-place"${dis}>${placeOptions(edit.place)}</select>
       <small class="note">Presence boards and plugs go in a room; door and window sensors on their door or window.</small></label>
-    ${switchesOf(d.id).map(e=>{const k=objOf(e),v=edit.loads[k]||{kind:'',label:''};
+    ${switchesOf(d.id).map(e=>{const k=objOf(e),v=edit.loads[k]||{kind:'',label:'',room:''};
       return `<fieldset class="load"><legend class="label">${esc(switchName(e))} switch drives</legend>
         <select class="field" data-load="${esc(k)}" aria-label="${esc(switchName(e))} switch drives"${dis}>
           ${[['','Nothing'],...Object.entries(KIND).map(([id,x])=>[id,x.name])].map(([id,t])=>`<option value="${id}"${id===v.kind?' selected':''}>${t}</option>`).join('')}</select>
         <input class="field" data-load-label="${esc(k)}" value="${esc(v.label)}" maxlength="60" placeholder="${esc(KIND[v.kind]?.name||'Name')}, e.g. ${v.kind==='fan'?'Ceiling fan':'Ceiling light'}" aria-label="${esc(switchName(e))} appliance name" autocomplete="off"${dis||(v.kind?'':' disabled')}>
+        <select class="field wide" data-load-room="${esc(k)}" aria-label="${esc(switchName(e))} appliance room"${dis||(v.kind?'':' disabled')}>
+          <option value="">In the switch’s room</option>${['g','u','out'].map(l=>`<optgroup label="${LVNAME[l]}">${ROOMS.filter(r=>r.lv===l).map(r=>`<option value="${r.id}"${r.id===v.room?' selected':''}>In ${esc(r.name)}</option>`).join('')}</optgroup>`).join('')}</select>
       </fieldset>`;}).join('')}
     ${edit.error?`<p class="note err-note" role="alert">${esc(edit.error)}</p>`:''}
     <div class="actions"><button class="btn primary" type="submit"${dis}>${edit.busy?'Saving…':'Save'}</button>
@@ -1069,9 +1126,9 @@ async function saveDevice(d){
   if(edit.place!==placeOf(d)){if(kind==='opening')body.opening=where;else body.room=where;}
   const was=loadsOf(d),loads={};
   for(const [k,v] of Object.entries(edit.loads)){
-    const label=v.label.trim();
-    if(v.kind===(was[k]?.kind||'')&&(!v.kind||label===(was[k]?.label||'')))continue;
-    loads[k]=v.kind?(label?{kind:v.kind,label}:{kind:v.kind}):null;
+    const label=v.label.trim(), room=v.room||'';
+    if(v.kind===(was[k]?.kind||'')&&(!v.kind||(label===(was[k]?.label||'')&&room===(was[k]?.room||''))))continue;
+    loads[k]=v.kind?{kind:v.kind,...(label?{label}:{}),...(room?{room}:{})}:null;
   }
   if(Object.keys(loads).length)body.loads=loads;
   if(!Object.keys(body).length){edit.id=null;render();return;}
@@ -1099,9 +1156,11 @@ function bindDevices(){
     const k=e.target.dataset.load; edit.loads[k]={...edit.loads[k],kind:e.target.value};
     // the name box enables with a kind; redraw now (the select keeps focus, so a live redraw would wait)
     const inp=form.querySelector(`[data-load-label="${CSS.escape(k)}"]`); inp.disabled=!e.target.value;
+    form.querySelector(`[data-load-room="${CSS.escape(k)}"]`).disabled=!e.target.value;
     inp.placeholder=`${KIND[e.target.value]?.name||'Name'}, e.g. ${e.target.value==='fan'?'Ceiling fan':'Ceiling light'}`;
   }));
   form.querySelectorAll('[data-load-label]').forEach(i=>i.addEventListener('input',e=>{const k=e.target.dataset.loadLabel;edit.loads[k]={...edit.loads[k],label:e.target.value};}));
+  form.querySelectorAll('[data-load-room]').forEach(i=>i.addEventListener('change',e=>{const k=e.target.dataset.loadRoom;edit.loads[k]={...edit.loads[k],room:e.target.value};}));
   form.onsubmit=e=>{e.preventDefault(); if(d&&!edit.busy)saveDevice(d);};
 }
 function devicesHtml(){
@@ -1119,7 +1178,7 @@ function devicesHtml(){
         <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed yet'}</dd>
         ${[false,true].map(diag=>{const es=entitiesOf(d.id).filter(e=>!!e.diagnostic===diag);
           return (diag&&es.length?'<dt class="facts-group">Diagnostics</dt>':'')+es.map(e=>e.command
-            ?`<dt>${esc(switchName(e))} switch</dt><dd class="sw-fact"><span>${loadOf(e)?`${esc(KIND[loadOf(e).kind]?.name||loadOf(e).kind)}${loadOf(e).label?` · ${esc(loadOf(e).label)}`:''}`:'Not assigned'}</span>${switchBtn(e,d)}</dd>`
+            ?`<dt>${esc(switchName(e))} switch</dt><dd class="sw-fact"><span>${loadOf(e)?`${esc(KIND[loadOf(e).kind]?.name||loadOf(e).kind)}${loadOf(e).label?` · ${esc(loadOf(e).label)}`:''}${ROOM_BY_ID[loadOf(e).room]&&loadOf(e).room!==d.room?` · ${esc(ROOM_BY_ID[loadOf(e).room].name)}`:''}`:'Not assigned'}</span>${switchBtn(e,d)}</dd>`
             :`<dt>${esc(e.name)}</dt><dd>${esc(formatValue(e))}${e.at?`, ${ago(e.at)}`:''}</dd>`).join('');}).join('')}
         <dt>IP</dt><dd>${esc(d.ip||'—')}</dd>
         <dt>Board</dt><dd>${esc([d.model,d.firmware&&'ESPHome '+d.firmware].filter(Boolean).join(' · ')||'—')}</dd>
@@ -1550,13 +1609,15 @@ function resize(){
 new ResizeObserver(resize).observe(stage); resize();
 const compass=document.getElementById('compass');
 const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+let lastFrame=null;
 function loop(now){
   if(tween){
     const k=Math.min(1,(now-tween.t0)/tween.ms),e=ease(k);
     camera.position.lerpVectors(tween.p0,tween.p1,e); controls.target.lerpVectors(tween.q0,tween.q1,e);
     if(k>=1)tween=null;
   }
-  stepLamps(); stepSwings(); stepShakes(now); controls.update(); renderer.render(scene,camera);
+  const dt=Math.min(.1,(now-(lastFrame??now))/1000); lastFrame=now;
+  stepLamps(); stepFans(dt); stepSwings(); stepShakes(now); controls.update(); renderer.render(scene,camera);
   placeTags(stage.clientWidth,stage.clientHeight);
   // the plan's north is -z: on screen it sits at the camera's azimuth, clockwise from up
   compass.style.transform=`rotate(${controls.getAzimuthalAngle()}rad)`;
