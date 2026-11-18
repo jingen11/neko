@@ -1,5 +1,6 @@
 substitutions:
   name: presence-gf
+  max_range_cm: "500"   # overrides the base 300 cm
 
 packages:
   base: !include presence-base.yaml
