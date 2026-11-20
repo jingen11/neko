@@ -330,6 +330,32 @@ function parse(b: Binding, text: string): number | string | boolean | null {
   return s !== "" && Number.isFinite(Number(s)) ? Number(s) : s;
 }
 
+/**
+ * A Tuya metering plug samples voltage just as its relay closes under load and can report nonsense (3.7 V).
+ * It only re-sends voltage when it changes by more than its threshold, and mains barely moves, so that
+ * value would stay. A few seconds after a switch turns on, ask Zigbee2MQTT for a fresh voltage reading
+ * (publishing {"voltage": ""} to <state topic>/get); it comes back on the state topic like any other reading.
+ * Only for voltage entities that have reported before, so a device that never measures voltage isn't asked.
+ */
+const REREAD_MS = 5000;
+const rereadTimers = new Map<string, NodeJS.Timeout>();
+function rereadVoltage(deviceId: string) {
+  if (!devices.get(deviceId)?.zigbee) return;
+  clearTimeout(rereadTimers.get(deviceId));
+  rereadTimers.set(
+    deviceId,
+    setTimeout(() => {
+      rereadTimers.delete(deviceId);
+      if (!client || !connected) return;
+      for (const b of bindingOf.values()) {
+        const e = b.entity;
+        if (e.device !== deviceId || e.deviceClass !== "voltage" || typeof e.value !== "number" || b.jsonPath?.length !== 1) continue;
+        client.publish(`${b.stateTopic}/get`, JSON.stringify({ [b.jsonPath[0]]: "" }));
+      }
+    }, REREAD_MS),
+  );
+}
+
 function onState(topic: string, text: string, retained: boolean) {
   for (const b of byStateTopic.get(topic) ?? []) {
     const value = parse(b, text);
@@ -340,6 +366,7 @@ function onState(topic: string, text: string, retained: boolean) {
     e.at = retained ? null : Date.now();
     e.value = value;
     emit({ type: "entity", entity: e });
+    if (value === true && !retained && e.component === "switch") rereadVoltage(e.device);
   }
   const a = byAvailTopic.get(topic);
   if (a) {
