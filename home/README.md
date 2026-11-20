@@ -77,6 +77,27 @@ curl -X PATCH localhost:8090/api/devices/ground_floor_smart_plug -H 'content-typ
 curl -X POST  localhost:8090/api/switches/0x54ef44100196dcde/switch_top -H 'content-type: application/json' -d '{"on":true}'
 ```
 
+## ねこ's house tools (MCP)
+
+`POST /mcp` is an MCP server (Streamable HTTP, stateless) so ねこ can work the lights and fans by voice, through the Hermes `neko` profile. It lives here, not in `server/`, because neko-home already holds the MQTT connection and knows what each switch drives.
+
+| Tool | What it does |
+|---|---|
+| `list_appliances()` | every light and fan: name, kind, room and floor, on/off, online or offline |
+| `set_appliance(on, id?, room?, kind?, name?)` | switches every appliance matching all the filters given (at least one): `room: "living", kind: "light"` is every light in the living area; `name` matches part of the name. Says what was switched and what wasn't (an offline switch) |
+
+Only switches given an appliance on the **Devices** tab are listed; a plug with nothing assigned isn't. There's no key: the dashboard, and so `/mcp`, is only reachable on the tailnet.
+
+In `~/.hermes/profiles/neko/config.yaml` on the Hermes box, next to `neko_world`:
+
+```yaml
+  neko_home:
+    url: https://dash.home.je-dev.com/mcp
+    enabled: true
+```
+
+then restart the Hermes gateway, and check it with `hermes mcp test neko_home`. Keep the name unique: the gateway shares MCP servers by name across profiles.
+
 ## Run
 
 ```bash
@@ -111,4 +132,5 @@ Live updates are server-sent events on `/api/events`; `flush_interval -1` sends 
 | `GET /api/alarm/alarms?limit=&beforeAt=&beforeId=&since=` | alarms across every armed stretch, newest first (`since` also counts those after that time) |
 | `GET /api/alarm/sessions?limit=` | past armed sessions, newest first |
 | `GET /api/alarm/sessions/:id/events` | what the sensors did during one session |
+| `POST /mcp` | MCP server for ねこ's house tools (see above) |
 | `GET /health` | `{"status":"ok","mqtt":true}` |

@@ -71,7 +71,7 @@ Each conversation turn makes two calls at once. The **grammar check** stays on l
 ねこ is a pet and tutor with a brain but no memory: it gets only the recent conversation that neko sends. Only the neko server writes your record. The `neko` profile is set up for that, in `~/.hermes/profiles/neko/`:
 
 - cloned from `default`, on the local model; `SOUL.md` replaced with a short note (follow the app's instructions and format, use tools for real-world facts)
-- MCP server: `neko_world` only (this repo's `world/`, see [World tools](#world-tools-mcp-server)): time, weather, where the learner is. Not `mcp-server-time`: with it, the model took the zone from the system prompt (the server's, not the learner's) and misread 24-hour times. Keep MCP server names unique (`neko_world`, not `world`): one gateway shares MCP servers by name across profiles, so a same-named server in another profile takes its place (and its failures).
+- MCP servers: `neko_world` (this repo's `world/`, see [World tools](#world-tools-mcp-server)): time, weather, where the learner is; and `neko_home` (the home dashboard's `/mcp`, see `home/README.md`): the lights and fans. Not `mcp-server-time`: with it, the model took the zone from the system prompt (the server's, not the learner's) and misread 24-hour times. Keep MCP server names unique (`neko_world`, not `world`): one gateway shares MCP servers by name across profiles, so a same-named server in another profile takes its place (and its failures).
 - no file, skill, memory or session tools (`agent.disabled_toolsets`), all skills off, `auxiliary.background_review.enabled: false`, `memory.memory_enabled` / `user_profile_enabled: false`, `max_turns: 20`
 
 Hermes can't enforce a JSON schema, so the reply's shape (ja, en, mood) is in the prompt and checked in code: a reply in plain Japanese is spoken as is (no English that turn), anything else is retried once. If Hermes fails, the check still shows, ねこ looks sick and the page says why. A turn takes about 5–25 s; tool calls add time.
@@ -92,7 +92,7 @@ The coordinates come from ip2location.io's answer; the neko server names the IAN
 
 Open-Meteo's servers are in Europe and can take more than Node's 250 ms per address to connect from home (and IPv6 doesn't route), so the server allows 2 s per attempt.
 
-Setup on the box: `cd world && npm install`, then in `~/.hermes/profiles/neko/config.yaml` make `neko_world` the only MCP server (remove `weather` and `neko_time`):
+Setup on the box: `cd world && npm install`, then in `~/.hermes/profiles/neko/config.yaml` add `neko_world` as an MCP server, next to `neko_home` (remove `weather` and `neko_time`):
 
 ```yaml
   neko_world:

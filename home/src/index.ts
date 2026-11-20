@@ -4,6 +4,7 @@ import { command, device, entity, place, snapshot, start, subscribe } from "./br
 import { isOpening, isRoom, openings, rooms } from "./areas.ts";
 import { addAway, alarms, alarmsSince, aways, clearOverride, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
+import { registerMcp } from "./mcp.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -234,6 +235,9 @@ app.get<{ Params: { id: number } }>(
   { schema: { params: { type: "object", properties: { id: { type: "integer" } } } } },
   async (req) => events(req.params.id),
 );
+
+/** ねこ's tools for the lights and fans, for the Hermes neko profile (see mcp.ts). */
+registerMcp(app);
 
 start(app.log);
 

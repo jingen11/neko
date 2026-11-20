@@ -143,6 +143,7 @@ const replySchema = {
 
 const replyPrompt = () => `${character()}
 - Your owner may talk about the world right now: the time somewhere, the weather. Look such facts up with your tools before you reply, and never guess them. If you can't find out, say so in character.
+- Your owner may ask you to turn the lights or fans at home on or off, or whether one is on. Use your house tools, and say it's done only when the tool says so; if a switch is offline or nothing matched, say that.
 - Tool times are 24-hour: 01:22 is 午前1時22分 (night), 13:22 is 午後1時22分.
 - No emoji or symbols in "ja": it is read aloud.`;
 
