@@ -159,15 +159,21 @@ function plainReply(text: string): PetReply | undefined {
 }
 
 /**
- * What ねこ says, from Hermes's neko profile, which can look things up (the time anywhere, the weather). petTurn still writes its own reply, because its check is judged from that same
+ * What ねこ says to `text`, from Hermes's neko profile, which can look things up (the time anywhere, the weather)
+ * and switch the lights and fans. petTurn still writes its own reply, because its check is judged from that same
  * understanding; that reply is not spoken.
+ *
+ * Hermes keeps this conversation (`session`), so the earlier turns come with the tools ねこ called for them.
+ * Sent as text, they showed ねこ answering "is the light on?" or "turn it off" with no tool call, and the local
+ * model copied that instead of calling its tools.
  */
-export async function petReply(history: ChatMessage[]): Promise<{ reply: PetReply; ms: number }> {
+export async function petReply(text: string, session: string): Promise<{ reply: PetReply; ms: number }> {
   const { data, ms } = await hermesJson<PetReply>(
     nekoProfile(),
-    [{ role: "system", content: replyPrompt() }, ...history.slice(-13)],
+    [{ role: "system", content: replyPrompt() }, { role: "user", content: text }],
     replySchema,
     plainReply,
+    session,
   );
   const ja = String(data.ja ?? "").trim();
   if (!ja) throw new Error("Hermes gave an empty reply");

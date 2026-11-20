@@ -50,6 +50,9 @@ const history: ChatMessage[] = []; // shared conversation (the pet remembers the
  */
 const CHAT_IDLE_MS = 30 * 60_000;
 let idleTimer: NodeJS.Timeout | undefined;
+/** Hermes keeps ねこ's side of the conversation, tool calls included (petReply); a new id starts it over. */
+const newHermesSession = () => `neko-${randomUUID()}`;
+let hermesSession = newHermesSession();
 let lastSay: { ja: string; en: string; mood: Mood } | null = null;
 /** Recent pet lines by id, so a later "reveal" can be recorded as a listening miss (once per line). */
 const recentSays = new Map<string, { ja: string; en: string; revealed: boolean }>();
@@ -64,6 +67,7 @@ const sendWeb = (msg: ServerMessage) => clients.forEach((c) => c.hello?.client =
 /** Start ねこ's conversation over, and tell every client. A button press (or a swipe on the board) always gets an answer, so it shows. */
 function clearChat(reason: "button" | "idle") {
   clearTimeout(idleTimer);
+  hermesSession = newHermesSession();
   if (!history.length && reason === "idle") return;
   history.length = 0;
   log.info(`ねこ's conversation started over (${reason})`);
@@ -150,7 +154,7 @@ async function onConfirm(c: Client, text: string) {
   setState("think", "curious", 130_000); // a Hermes reply can include tool calls
   try {
     const turn: ChatMessage[] = [...history.slice(-12), { role: "user", content: text }];
-    const [checked, spoken] = await Promise.allSettled([petTurn(turn), petReply(turn)]);
+    const [checked, spoken] = await Promise.allSettled([petTurn(turn), petReply(text, hermesSession)]);
     if (checked.status === "rejected") throw checked.reason;
     const { correction, ms } = checked.value;
     log.info({ said: text, mistakes: correction.mistakes }, `check ${ms}ms`);

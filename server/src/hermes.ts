@@ -23,7 +23,10 @@ function parse<T>(text: string, schema: Schema): T {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error(`no JSON object in the reply: ${text.slice(0, 120)}`);
-  const data = JSON.parse(text.slice(start, end + 1));
+  let data = JSON.parse(text.slice(start, end + 1));
+  // The local model sometimes answers in the schema's own shape: {"type":"object","properties":{"ja":…}}.
+  const inner = data?.properties;
+  if (inner && typeof inner === "object" && (schema.required ?? []).every((k) => k in inner)) data = inner;
   const missing = (schema.required ?? []).filter((k) => !(k in data));
   if (missing.length) throw new Error(`reply is missing ${missing.join(", ")}`);
   return data as T;
@@ -42,34 +45,47 @@ const base = (p: Profile) => `${config.hermesUrl}/p/${p.name}`;
 /**
  * Ask a Hermes profile for JSON matching `schema`. `messages` starts with the system message. Thinking is off.
  * `fromText` turns a reply that isn't JSON into a usable result (or undefined to retry).
+ *
+ * With `session`, Hermes keeps the conversation: only the last message is sent, and Hermes loads the earlier
+ * turns from its own store, with the tool calls and their results. (A request can't carry those: Hermes keeps
+ * only the text of user and assistant messages.) Without it, every call is a fresh session and `messages`
+ * carries the conversation as text.
  */
 export async function hermesJson<T>(
   p: Profile,
   messages: ChatMessage[],
   schema: Schema & object,
   fromText?: (text: string) => T | undefined,
+  session?: string,
 ): Promise<{ data: T; ms: number }> {
   if (!p.key) throw new Error(`${p.keyName} is not set in server/.env`);
   const t0 = performance.now();
   const [first, ...rest] = messages;
   const system = first?.role === "system" ? first.content : "";
   const others = first?.role === "system" ? rest : messages;
-  // Hermes keeps one session per system message. A fresh one each call: the caller already sends the recent
-  // conversation, and a long-lived session fills up with old answers the model copies instead of using its tools.
-  const session = `\n\n(Request ${randomUUID().slice(0, 8)})`;
+  const sent = session ? others.slice(-1) : others;
   let problem = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    // On the retry, say what was wrong. (This also changes the system message, so Hermes starts a fresh session.)
+    // A retry never goes into the session: asked the same thing again there, the model answered from the
+    // conversation without its tools, and contradicted what they had just said. A fresh one has nothing to copy.
+    const inSession = !!session && attempt === 0;
+    // Without a session, Hermes keeps one per system message: a request id makes each call a fresh one.
+    const fresh = inSession ? "" : `\n\n(Request ${randomUUID().slice(0, 8)})`;
+    // On the retry, say what was wrong.
     const note = problem ? `\n\nYour previous reply could not be used (${problem}). Reply with the JSON object only.` : "";
     const res = await fetch(`${base(p)}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${p.key}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${p.key}`,
+        ...(inSession && { "X-Hermes-Session-Id": session }),
+      },
       signal: AbortSignal.timeout(TIMEOUT_MS),
       body: JSON.stringify({
         model: "hermes-agent", // the profile decides the model
         stream: false,
         model_options: { reasoning: { enabled: false } },
-        messages: [{ role: "system", content: system + formatRule(schema) + note + session }, ...others],
+        messages: [{ role: "system", content: system + formatRule(schema) + note + fresh }, ...sent],
       }),
     });
     const body = await res.json().catch(() => null);
@@ -82,7 +98,7 @@ export async function hermesJson<T>(
       problem = (err as Error).message;
       const plain = fromText?.(text);
       if (plain !== undefined) return { data: plain, ms: ms() };
-      // A retry starts a fresh Hermes session, which can lose what the first try looked up: keep what was rejected.
+      // A retry starts a fresh session, which can lose what the first try looked up: keep what was rejected.
       console.warn(`Hermes ${p.name} reply ${attempt + 1} rejected (${problem}): ${JSON.stringify(text.slice(0, 600))}`);
     }
   }
