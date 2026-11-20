@@ -8,7 +8,9 @@ import { config, layout } from "./config.ts";
  * The alarm, kept in home.db so a restart doesn't drop it.
  *
  * It arms itself from a schedule, in the box's local time:
- *   - armed periods: daily windows like 23:00-07:00 (an end before the start runs past midnight)
+ *   - armed periods: windows like 23:00-07:00 on chosen days of the week (Mon-Fri, Sat+Sun, or every day).
+ *     An end before the start runs past midnight; such a period belongs to the day it starts on,
+ *     so a Friday 23:00-07:00 runs into Saturday morning.
  *   - away days: date ranges, armed all day long
  * Arming or disarming by hand overrides the schedule until the schedule itself next changes
  * (e.g. disarm at 23:30 inside a 23:00-07:00 period -> stays disarmed until 07:00, then follows the schedule).
@@ -25,7 +27,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS alarm_periods (
     id    INTEGER PRIMARY KEY,
     start TEXT NOT NULL,               -- HH:MM local
-    end   TEXT NOT NULL                -- HH:MM local; before start = runs past midnight
+    end   TEXT NOT NULL,               -- HH:MM local; before start = runs past midnight
+    days  INTEGER NOT NULL DEFAULT 127 -- days it starts on, bit n = day n (0 Sunday .. 6 Saturday); 127 = every day
   );
   CREATE TABLE IF NOT EXISTS alarm_away (
     id        INTEGER PRIMARY KEY,
@@ -62,13 +65,23 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS alarm_events_session ON alarm_events(session_id, at);
   CREATE INDEX IF NOT EXISTS alarm_events_at ON alarm_events(at);
 `);
+// databases from before periods had days: their periods ran every day, and still do
+if (!(db.prepare("PRAGMA table_info(alarm_periods)").all() as { name: string }[]).some((c) => c.name === "days")) {
+  db.exec("ALTER TABLE alarm_periods ADD COLUMN days INTEGER NOT NULL DEFAULT 127");
+}
 
 // ---- types ----
+
+/** days of the week, in the order of Date.getDay() */
+export const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+export type Day = (typeof DAYS)[number];
 
 export interface Period {
   id: number;
   start: string;
   end: string;
+  /** the days it starts on, Monday first */
+  days: Day[];
 }
 export interface Away {
   id: number;
@@ -143,31 +156,40 @@ const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.sl
 const pad = (n: number) => String(n).padStart(2, "0");
 const localDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-const qPeriods = db.prepare("SELECT id, start, end FROM alarm_periods ORDER BY start, id");
+const qPeriods = db.prepare("SELECT id, start, end, days FROM alarm_periods ORDER BY start, id");
 const qAways = db.prepare("SELECT id, from_date AS 'from', to_date AS 'to', note FROM alarm_away ORDER BY from_date, id");
 
-export const periods = () => qPeriods.all() as unknown as Period[];
+const MONDAY_FIRST = [1, 2, 3, 4, 5, 6, 0];
+const toMask = (days: readonly Day[]) => days.reduce((m, d) => m | (1 << DAYS.indexOf(d)), 0);
+const fromMask = (mask: number) => MONDAY_FIRST.filter((i) => mask & (1 << i)).map((i) => DAYS[i]);
+
+const periodRows = () => qPeriods.all() as { id: number; start: string; end: string; days: number }[];
+export const periods = (): Period[] => periodRows().map((p) => ({ ...p, days: fromMask(Number(p.days)) }));
 export const aways = () => qAways.all() as unknown as Away[];
 
 function scheduledNow(now = new Date()): Scheduled {
   const today = localDate(now);
   if (aways().some((a) => a.from <= today && today <= a.to)) return "away";
   const m = now.getHours() * 60 + now.getMinutes();
-  for (const p of periods()) {
+  const thisDay = 1 << now.getDay();
+  const dayBefore = 1 << (now.getDay() + 6) % 7;
+  for (const p of periodRows()) {
     const s = minutes(p.start);
     const e = minutes(p.end);
-    if (s < e ? s <= m && m < e : m >= s || m < e) return "schedule";
+    const on = (day: number) => (Number(p.days) & day) !== 0;
+    // past midnight, the morning part belongs to the day before
+    if (s < e ? on(thisDay) && s <= m && m < e : (on(thisDay) && m >= s) || (on(dayBefore) && m < e)) return "schedule";
   }
   return "off";
 }
 
-/** Replace all armed periods at once. */
-export function setPeriods(list: { start: string; end: string }[]) {
+/** Replace all armed periods at once. A period without days runs every day. */
+export function setPeriods(list: { start: string; end: string; days?: Day[] }[]) {
   db.exec("BEGIN");
   try {
     db.exec("DELETE FROM alarm_periods");
-    const ins = db.prepare("INSERT INTO alarm_periods (start, end) VALUES (?, ?)");
-    for (const p of list) ins.run(p.start, p.end);
+    const ins = db.prepare("INSERT INTO alarm_periods (start, end, days) VALUES (?, ?, ?)");
+    for (const p of list) ins.run(p.start, p.end, p.days ? toMask(p.days) : 127);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
