@@ -2,7 +2,7 @@ import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { command, device, entity, place, snapshot, start, subscribe } from "./broker.ts";
 import { isOpening, isRoom, openings, rooms } from "./areas.ts";
-import { addAway, alarms, alarmsSince, aways, clearOverride, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
+import { addAway, alarms, alarmsSince, aways, clearOverride, DAYS, type Day, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
 
 const app = Fastify({ logger: { level: "info" } });
@@ -157,16 +157,28 @@ app.post<{ Body: { armed: boolean } }>(
 /** Drop a manual arm/disarm and follow the schedule again. */
 app.delete("/api/alarm/override", async () => clearOverride());
 
-/** Daily armed periods, replaced as a whole: [{"start":"23:00","end":"07:00"}, ...]. An end before the start runs past midnight. */
+/**
+ * Armed periods, replaced as a whole: [{"start":"23:00","end":"07:00","days":["mon","tue","wed","thu","fri"]}, ...].
+ * An end before the start runs past midnight, and belongs to the day it starts on. Without days it runs every day.
+ */
 app.get("/api/alarm/periods", async () => periods());
-app.put<{ Body: { start: string; end: string }[] }>(
+app.put<{ Body: { start: string; end: string; days?: Day[] }[] }>(
   "/api/alarm/periods",
   {
     schema: {
       body: {
         type: "array",
         maxItems: 20,
-        items: { type: "object", required: ["start", "end"], properties: { start: { type: "string" }, end: { type: "string" } }, additionalProperties: false },
+        items: {
+          type: "object",
+          required: ["start", "end"],
+          properties: {
+            start: { type: "string" },
+            end: { type: "string" },
+            days: { type: "array", minItems: 1, maxItems: 7, uniqueItems: true, items: { type: "string", enum: [...DAYS] } },
+          },
+          additionalProperties: false,
+        },
       },
     },
   },

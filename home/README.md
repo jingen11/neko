@@ -60,17 +60,17 @@ A room glows warm while any online presence sensor in it reads occupied; an offl
 
 `data/home.db` (SQLite, `HOME_DATA_DIR` to move it) holds the alarm. It arms itself from a schedule, in the box's local time:
 
-- **Armed periods**: daily windows such as `23:00`–`07:00`. An end before the start runs past midnight.
+- **Armed periods**: windows such as `23:00`–`07:00` on chosen days of the week, for example weekdays 23:00–07:00 and weekends 01:00–09:00. A period with no days runs every day. An end before the start runs past midnight, and the period belongs to the day it starts on: a Friday 23:00–07:00 runs until 07:00 on Saturday.
 - **Away days**: date ranges, inclusive. The alarm stays armed all day.
 
 Arming or disarming by hand overrides the schedule until the schedule itself next changes. For example, disarming at 23:30 inside a 23:00–07:00 period holds until 07:00. `DELETE /api/alarm/override` goes back to the schedule straight away.
 
-On the dashboard, the **Alarm** tab shows the state, arm/disarm, and the alarms: someone detected, a door or window opening, or a board going offline while armed, newest first by day. The **Settings** tab holds the periods and away days.
+On the dashboard, the **Alarm** tab shows the state, arm/disarm, and the alarms: someone detected, a door or window opening, or a board going offline while armed, newest first by day. The **Settings** tab holds the periods, drawn as a week, and the away days.
 
 Each armed stretch is a session (`alarm_sessions`). While one is open, every live sensor change and every board going online or offline is written to `alarm_events`, with the device's room or opening. Retained values replayed on reconnect aren't logged.
 
 ```bash
-curl -X PUT  localhost:8090/api/alarm/periods -H 'content-type: application/json' -d '[{"start":"23:00","end":"07:00"}]'
+curl -X PUT  localhost:8090/api/alarm/periods -H 'content-type: application/json' -d '[{"start":"23:00","end":"07:00","days":["mon","tue","wed","thu","fri"]},{"start":"01:00","end":"09:00","days":["sat","sun"]}]'
 curl -X POST localhost:8090/api/alarm/away    -H 'content-type: application/json' -d '{"from":"2026-12-20","to":"2026-12-27","note":"trip"}'
 curl -X POST localhost:8090/api/alarm         -H 'content-type: application/json' -d '{"armed":true}'
 curl -X PATCH localhost:8090/api/devices/ground_floor_smart_plug -H 'content-type: application/json' -d '{"label":"Lobby plug","room":"lobby"}'
@@ -106,7 +106,7 @@ Live updates are server-sent events on `/api/events`; `flush_interval -1` sends 
 | `GET /api/alarm` | armed or not, why (`schedule` / `away` / `manual`), any override, the open session, periods and away days |
 | `POST /api/alarm` | `{"armed": bool}`: manual arm or disarm |
 | `DELETE /api/alarm/override` | follow the schedule again |
-| `GET`/`PUT /api/alarm/periods` | daily armed periods, replaced as a whole |
+| `GET`/`PUT /api/alarm/periods` | armed periods, replaced as a whole: `start`, `end` and `days` (`"mon"` … `"sun"`; left out = every day) |
 | `GET`/`POST /api/alarm/away`, `DELETE /api/alarm/away/:id` | away days |
 | `GET /api/alarm/alarms?limit=&beforeAt=&beforeId=&since=` | alarms across every armed stretch, newest first (`since` also counts those after that time) |
 | `GET /api/alarm/sessions?limit=` | past armed sessions, newest first |

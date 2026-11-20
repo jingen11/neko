@@ -1227,17 +1227,44 @@ const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.get
 function alarmNote(s){
   const away=alarm.away.find(a=>a.from<=todayStr()&&todayStr()<=a.to);
   if(s.reason==='away')return `You're away until ${shortDate(away?.to||todayStr())}`;
-  if(s.reason==='schedule'){const m=new Date().getHours()*60+new Date().getMinutes(),mins=t=>+t.slice(0,2)*60+ +t.slice(3);
-    const p=alarm.periods.find(p=>{const a=mins(p.start),b=mins(p.end);return a<b?a<=m&&m<b:m>=a||m<b;});
-    return p?`Armed period ${p.start}–${p.end}`:'Armed by the schedule';}
+  if(s.reason==='schedule'){const p=periodNow();
+    return p?`Armed period ${p.start}–${p.end}, ${daysLabel(p.days).toLowerCase()}`:'Armed by the schedule';}
   if(s.reason==='manual')return 'Armed by hand, until the schedule next changes';
   if(s.override)return 'Disarmed by hand, until the schedule next changes';
-  return alarm.periods.length?`Next armed at ${nextStart()}`:'No armed periods set';
+  const next=alarm.periods.length&&nextStart();
+  return next?`Next armed at ${next}`:'No armed periods set';
 }
+/* periods start on days of the week ('sun'..'sat', as Date.getDay()); one past midnight belongs to the day it starts */
+const DAY_KEYS=['sun','mon','tue','wed','thu','fri','sat'], WEEK=[1,2,3,4,5,6,0];
+const DAY_NAME={sun:'Sun',mon:'Mon',tue:'Tue',wed:'Wed',thu:'Thu',fri:'Fri',sat:'Sat'};
+const PRESETS={weekdays:['mon','tue','wed','thu','fri'],weekend:['sat','sun'],every:WEEK.map(i=>DAY_KEYS[i])};
+const sameDays=(a,b)=>a.length===b.length&&b.every(d=>a.includes(d));
+/** Every day, Weekdays, Weekends, Mon–Thu, or Mon, Wed, Fri */
+function daysLabel(days){
+  if(days.length===7)return 'Every day';
+  if(sameDays(days,PRESETS.weekdays))return 'Weekdays';
+  if(sameDays(days,PRESETS.weekend))return 'Weekends';
+  const idx=WEEK.map(i=>DAY_KEYS[i]).map((d,i)=>days.includes(d)?i:-1).filter(i=>i>=0);
+  const run=idx.length>2&&idx.at(-1)-idx[0]===idx.length-1;
+  const name=i=>DAY_NAME[DAY_KEYS[WEEK[i]]];
+  return run?`${name(idx[0])}–${name(idx.at(-1))}`:idx.map(name).join(', ');
+}
+const nowMin=()=>{const d=new Date();return d.getHours()*60+d.getMinutes();};
+/** the period arming the alarm now, if any */
+function periodNow(){
+  const m=nowMin(), today=DAY_KEYS[new Date().getDay()], yday=DAY_KEYS[(new Date().getDay()+6)%7];
+  return alarm.periods.find(p=>{const a=toMin(p.start),b=toMin(p.end);
+    return a<b?p.days.includes(today)&&a<=m&&m<b:(p.days.includes(today)&&m>=a)||(p.days.includes(yday)&&m<b);});
+}
+/** when the schedule next arms: "23:00", "23:00 tomorrow" or "Sat 08:00" */
 function nextStart(){
-  const m=new Date().getHours()*60+new Date().getMinutes(),mins=t=>+t.slice(0,2)*60+ +t.slice(3);
-  const sorted=alarm.periods.map(p=>p.start).sort();
-  return sorted.find(t=>mins(t)>m)||sorted[0];
+  const m=nowMin(), dow=new Date().getDay();
+  for(let k=0;k<=7;k++){
+    const day=DAY_KEYS[(dow+k)%7];
+    const t=alarm.periods.filter(p=>p.days.includes(day)&&(k>0||toMin(p.start)>m)).map(p=>p.start).sort()[0];
+    if(t)return k===0?t:k===1?`${t} tomorrow`:`${DAY_NAME[day]} ${t}`;
+  }
+  return null;
 }
 /** what an alarm was, in words, with an icon */
 function alarmLine(e){
@@ -1257,18 +1284,32 @@ function dayLabel(t){
 }
 /* pickers: their state lives here, not in the DOM, so live redraws keep it */
 const pad2=n=>String(n).padStart(2,'0');
-const picker={start:'23:00',end:'07:00',open:null,from:null,to:null,month:todayStr().slice(0,7),note:''};
+const picker={start:'23:00',end:'07:00',days:[...PRESETS.every],open:null,from:null,to:null,month:todayStr().slice(0,7),note:''};
 const toMin=t=>+t.slice(0,2)*60+ +t.slice(3);
 const dayCount=(a,b)=>Math.round((new Date(b+'T00:00')-new Date(a+'T00:00'))/864e5)+1;
-/** the 24 hours as a bar: armed periods filled, the one being added dashed, now as a line */
-function dayBarHtml(){
-  const segs=(st,en)=>{const a=toMin(st),b=toMin(en);return a<b?[[a,b]]:[[a,1440],[0,b]];};
+/** the week, Monday first, a 24-hour bar a day: armed periods filled (past midnight they carry into the next day's bar),
+ *  the one being added dashed, now as a line on today's */
+function weekBarHtml(){
+  // the parts of a period that fall on `day`: its own evening/whole span, and the morning of one started the day before
+  const segsOn=(p,day)=>{const a=toMin(p.start),b=toMin(p.end),prev=DAY_KEYS[(DAY_KEYS.indexOf(day)+6)%7];
+    if(a<b)return p.days.includes(day)?[[a,b]]:[];
+    return [...(p.days.includes(day)?[[a,1440]]:[]),...(p.days.includes(prev)?[[0,b]]:[])];};
   const seg=([a,b],cls)=>`<span class="db-seg ${cls}" style="left:${a/14.4}%;width:${(b-a)/14.4}%"></span>`;
-  const now=new Date(), m=now.getHours()*60+now.getMinutes();
-  const draft=picker.start!==picker.end?segs(picker.start,picker.end).map(x=>seg(x,'draft')).join(''):'';
-  return `<div class="daybar" role="img" aria-label="Armed hours: ${alarm.periods.map(p=>`${p.start} to ${p.end}`).join(', ')||'none'}">
-    <div class="db-track">${alarm.periods.flatMap(p=>segs(p.start,p.end)).map(x=>seg(x,'on')).join('')}${draft}<span class="db-now" style="left:${m/14.4}%"></span></div>
-    <div class="db-ticks mono"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div></div>`;
+  const today=DAY_KEYS[new Date().getDay()], m=nowMin();
+  const draft=picker.start!==picker.end&&picker.days.length?{start:picker.start,end:picker.end,days:picker.days}:null;
+  const rows=WEEK.map(i=>{const day=DAY_KEYS[i];
+    return `<span class="wb-day${day===today?' today':''}">${DAY_NAME[day]}</span>
+      <div class="db-track">${alarm.periods.flatMap(p=>segsOn(p,day)).map(x=>seg(x,'on')).join('')}${draft?segsOn(draft,day).map(x=>seg(x,'draft')).join(''):''}${day===today?`<span class="db-now" style="left:${m/14.4}%"></span>`:''}</div>`;}).join('');
+  const label=alarm.periods.map(p=>`${daysLabel(p.days)} ${p.start} to ${p.end}`).join(', ')||'none';
+  return `<div class="weekbar" role="img" aria-label="Armed hours: ${esc(label)}">${rows}
+    <span></span><div class="db-ticks mono"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div></div>`;
+}
+function dayChipsHtml(dis){
+  const chip=d=>`<button class="day-chip" data-act="day" data-v="${d}" aria-pressed="${picker.days.includes(d)}"${dis}>${DAY_NAME[d]}</button>`;
+  const preset=(k,l)=>`<button class="btn ghost day-preset" data-act="days" data-v="${k}" aria-pressed="${sameDays(picker.days,PRESETS[k])}"${dis}>${l}</button>`;
+  return `<div class="day-pick" role="group" aria-label="Days it starts on">
+    <div class="day-chips">${WEEK.map(i=>chip(DAY_KEYS[i])).join('')}</div>
+    <div class="day-presets">${preset('weekdays','Weekdays')}${preset('weekend','Weekend')}${preset('every','Every day')}</div></div>`;
 }
 function timeFieldHtml(which,label){
   return `<button class="tp-field${picker.open===which?' open':''}" data-act="tp-open" data-v="${which}" aria-expanded="${picker.open===which}">
@@ -1334,28 +1375,36 @@ function alarmHtml(){
     ${rows||'<p class="empty">No alarms yet. Someone detected, a door or window opening, or a sensor going offline while the alarm is armed shows up here.</p>'}
     ${alarm.more?`<button class="btn ghost more" data-act="more"${dis}>Show older</button>`:''}`;
 }
+function periodNote(){
+  if(!picker.days.length)return 'Pick the days it starts on.';
+  if(picker.start===picker.end)return 'Start and end must differ.';
+  const days=daysLabel(picker.days);
+  if(picker.end<picker.start)return `${days}, ${picker.start} to ${picker.end} the next morning.`;
+  return `${days}, ${picker.start} to ${picker.end}.`;
+}
 function settingsHtml(){
   if(!alarm.status)return `${headHtml('Settings','When the alarm arms')}<p class="empty">${alarm.error?esc(alarm.error):'Loading…'}</p>`;
   const dis=alarm.busy?' disabled':'';
-  const periods=alarm.periods.map((p,i)=>`<li class="mini"><span class="mono">${p.start} – ${p.end}${p.end<p.start?' <small class="label" style="display:inline">next day</small>':''}</span>
-      <button class="btn ghost" data-act="del-period" data-i="${i}" aria-label="Remove ${p.start} to ${p.end}"${dis}>Remove</button></li>`).join('');
+  const periods=alarm.periods.map((p,i)=>`<li class="mini"><span><b class="period-days">${daysLabel(p.days)}</b> <span class="mono">${p.start} – ${p.end}</span>${p.end<p.start?' <small class="label" style="display:inline">next day</small>':''}</span>
+      <button class="btn ghost" data-act="del-period" data-i="${i}" aria-label="Remove ${daysLabel(p.days)} ${p.start} to ${p.end}"${dis}>Remove</button></li>`).join('');
   const today=todayStr();
   const aways=alarm.away.map(a=>`<li class="mini"><span>${shortDate(a.from)}${a.to!==a.from?` – ${shortDate(a.to)}`:''}${a.note?` · ${esc(a.note)}`:''}${a.from<=today&&today<=a.to?' <b class="on">now</b>':a.to<today?' <b>past</b>':''}</span>
       <button class="btn ghost" data-act="del-away" data-id="${a.id}" aria-label="Remove away ${a.from} to ${a.to}"${dis}>Remove</button></li>`).join('');
   return `${headHtml('Settings','When the alarm arms')}
     ${alarm.error?`<p class="note err-note" role="alert">${esc(alarm.error)}</p>`:''}
-    <h2 class="section">Armed every day</h2>
+    <h2 class="section">Armed periods</h2>
     <article class="panel-card">
-      ${dayBarHtml()}
+      ${weekBarHtml()}
       ${periods?`<ul class="minis">${periods}</ul>`:'<p class="note">No periods yet. The alarm only arms on away days or by hand.</p>'}
+      ${dayChipsHtml(dis)}
       <div class="tp-fields">
         ${timeFieldHtml('start','From')}
         <span class="tp-arrow" aria-hidden="true">→</span>
         ${timeFieldHtml('end','To')}
-        <button class="btn primary" data-act="add-period"${dis||(picker.start===picker.end?' disabled':'')}>Add</button>
+        <button class="btn primary" data-act="add-period"${dis||(picker.start===picker.end||!picker.days.length?' disabled':'')}>Add</button>
       </div>
       ${picker.open?timePickerHtml(picker.open):''}
-      <p class="note">${picker.start===picker.end?'Start and end must differ.':picker.end<picker.start?`Runs past midnight, ${picker.start} to ${picker.end} the next morning.`:`${picker.start} to ${picker.end}, every day.`} Times are the box's clock.</p>
+      <p class="note">${periodNote()} Times are the box's clock.</p>
     </article>
 
     <h2 class="section">Away from home</h2>
@@ -1374,15 +1423,18 @@ function bindAlarm(){
     const a=b.dataset.act;
     if(a==='arm'||a==='disarm')alarmDo(()=>api('',{method:'POST',body:JSON.stringify({armed:a==='arm'})}));
     else if(a==='follow')alarmDo(()=>api('/override',{method:'DELETE'}));
-    else if(a==='del-period'){const list=alarm.periods.filter((_,i)=>i!==+b.dataset.i).map(({start,end})=>({start,end}));
+    else if(a==='del-period'){const list=alarm.periods.filter((_,i)=>i!==+b.dataset.i).map(({start,end,days})=>({start,end,days}));
       alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));}
     else if(a==='del-away')alarmDo(()=>api(`/away/${b.dataset.id}`,{method:'DELETE'}));
+    else if(a==='day'){const d=b.dataset.v;picker.days=picker.days.includes(d)?picker.days.filter(x=>x!==d):[...picker.days,d];render();}
+    else if(a==='days'){picker.days=[...PRESETS[b.dataset.v]];render();}
     else if(a==='tp-open'){picker.open=picker.open===b.dataset.v?null:b.dataset.v;picker.fresh=true;render();}
     else if(a==='tp-close'){picker.open=null;render();}
     else if(a==='tp-h'){picker[picker.open]=`${b.dataset.v}:${picker[picker.open].slice(3)}`;render();}
     else if(a==='tp-m'){picker[picker.open]=`${picker[picker.open].slice(0,2)}:${b.dataset.v}`;picker.open=picker.open==='start'?'end':null;render();}
     else if(a==='add-period'){if(picker.start===picker.end)return;
-      const list=[...alarm.periods.map(({start,end})=>({start,end})),{start:picker.start,end:picker.end}];picker.open=null;
+      if(!picker.days.length)return;
+      const list=[...alarm.periods.map(({start,end,days})=>({start,end,days})),{start:picker.start,end:picker.end,days:picker.days}];picker.open=null;
       alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));}
     else if(a==='cal-prev'||a==='cal-next'){const [y,m]=picker.month.split('-').map(Number),d=new Date(y,m-1+(a==='cal-next'?1:-1),1);
       picker.month=`${d.getFullYear()}-${pad2(d.getMonth()+1)}`;render();}
