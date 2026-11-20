@@ -522,21 +522,39 @@ static void send_touch(const char *gesture)
     esp_websocket_client_send_text(ws, buf, n, pdMS_TO_TICKS(1000));
 }
 
+/** ねこ starts its conversation over; the box answers with chat_cleared. */
+static void send_chat_reset(void)
+{
+    if (!ws_ready()) return;
+    static const char msg[] = "{\"type\":\"chat_reset\"}";
+    esp_websocket_client_send_text(ws, msg, sizeof msg - 1, pdMS_TO_TICKS(1000));
+}
+
+static bool swiped; // this press was a swipe: not a pet, and not the start of talking
+
 static void on_screen_event(lv_event_t *e)
 {
-    // tap: pet the cat. hold: talk (push-to-talk), let go to send.
+    // tap: pet the cat. hold: talk (push-to-talk), let go to send. swipe sideways: new conversation.
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_PRESSED) {
         swallow_touch = screen == SCREEN_OFF; // a dark screen: this touch only wakes it
+        swiped = false;
         activity();
     }
     if (swallow_touch) {
         if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) swallow_touch = false;
         return;
     }
-    if (code == LV_EVENT_SHORT_CLICKED) {
-        send_touch("pet");
-    } else if (code == LV_EVENT_LONG_PRESSED && ws_ready() && mic) {
+    if (code == LV_EVENT_GESTURE && !mic_wanted) {
+        // LVGL still sends SHORT_CLICKED when a swipe is let go, so remember it
+        lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+        if (dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) {
+            swiped = true;
+            send_chat_reset();
+        }
+    } else if (code == LV_EVENT_SHORT_CLICKED) {
+        if (!swiped) send_touch("pet");
+    } else if (code == LV_EVENT_LONG_PRESSED && !swiped && ws_ready() && mic) {
         mic_hold(true);
         if (fix_timer) lv_timer_delete(fix_timer); // a new try: clear the last check
         fix_hide(NULL);
@@ -742,6 +760,15 @@ static void handle_message(const char *json, size_t len)
         } else {
             ui_set(lbl_ja, "きこえなかった…");
             ui_set(lbl_en, "Didn't catch that. Hold the screen and speak.");
+        }
+    } else if (type && strcmp(type, "chat_cleared") == 0) {
+        // after a swipe (here or the web page's button); a reset after a quiet half hour shows nothing
+        const char *reason = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "reason"));
+        if (reason && strcmp(reason, "button") == 0 && bsp_display_lock(100)) {
+            activity();
+            lv_label_set_text(lbl_ja, "新しいお話をしよう！");
+            lv_label_set_text(lbl_en, "New conversation.");
+            bsp_display_unlock();
         }
     } else if (type && strcmp(type, "error") == 0) {
         const char *m = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "message"));

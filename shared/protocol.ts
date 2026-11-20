@@ -16,6 +16,8 @@
  *   ← correction {...}                  (ねこ's own check of the sentence, from the same answer as its reply)
  *   ← say {ja, en, mood} → audio_start → [binary voice frames] → audio_end
  *   ← state {...}                       (stats updated: practising feeds the pet)
+ *   ねこ remembers the last few turns. chat_reset (web: New conversation; board: swipe sideways) starts its
+ *   conversation over, and so do 30 quiet minutes; either way every client gets ← chat_cleared {reason}.
  *
  * Questions to Hermes, which reads the learner's vault (or the local model, if Hermes is down):
  *   ask_grammar {text}  →  ← state {anim:"think"}  →  ← answer {...}   Hermes on Claude
@@ -84,6 +86,11 @@ export interface AskCasual {
   text: string;
 }
 
+/** Start ねこ's conversation over: its next reply no longer sees the earlier turns. */
+export interface ChatReset {
+  type: "chat_reset";
+}
+
 /** Start the grammar or the Hermes conversation over: later questions no longer see the earlier ones. */
 export interface AskReset {
   type: "ask_reset";
@@ -99,7 +106,7 @@ export interface NetInfo {
   publicIp: string;
 }
 
-export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar | AskCasual | AskReset | NetInfo;
+export type ClientMessage = Hello | ListenStart | ListenEnd | Confirm | Touch | Repeat | Reveal | AskGrammar | AskCasual | AskReset | ChatReset | NetInfo;
 
 // ── server → client ──────────────────────────────────────────────────────────
 
@@ -209,7 +216,13 @@ export interface SensorMsg {
   at: number; // ms since epoch
 }
 
-export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | AnswerMsg | ErrorMsg | SensorMsg | AskHistory;
+/** ねこ's conversation was started over: by chat_reset (the web page's button, a swipe on the board), or after 30 quiet minutes. */
+export interface ChatCleared {
+  type: "chat_cleared";
+  reason: "button" | "idle";
+}
+
+export type ServerMessage = State | Heard | Say | AudioStart | AudioEnd | CorrectionMsg | AnswerMsg | ErrorMsg | SensorMsg | AskHistory | ChatCleared;
 
 // ── translation challenge (HTTP, not the WebSocket) ──────────────────────────
 //   GET  /api/challenge              → ChallengeState   today's current challenge (the daily one is made on first request)

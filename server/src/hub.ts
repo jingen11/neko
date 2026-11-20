@@ -43,6 +43,13 @@ const AUDIO_CHUNK_SAMPLES = 4096;
 
 const clients = new Set<Client>();
 const history: ChatMessage[] = []; // shared conversation (the pet remembers the last few turns)
+/**
+ * After this long without a turn, ねこ starts its conversation over. Old turns aren't only stale: the local
+ * model copies earlier answers ("ロビーの電気を消しました") instead of calling its tools, so a short history
+ * keeps it using them.
+ */
+const CHAT_IDLE_MS = 30 * 60_000;
+let idleTimer: NodeJS.Timeout | undefined;
 let lastSay: { ja: string; en: string; mood: Mood } | null = null;
 /** Recent pet lines by id, so a later "reveal" can be recorded as a listening miss (once per line). */
 const recentSays = new Map<string, { ja: string; en: string; revealed: boolean }>();
@@ -53,6 +60,15 @@ let log: FastifyBaseLogger;
 const send = (c: Client, msg: ServerMessage) => c.ws.readyState === c.ws.OPEN && c.ws.send(JSON.stringify(msg));
 const sendAll = (msg: ServerMessage) => clients.forEach((c) => send(c, msg));
 const sendWeb = (msg: ServerMessage) => clients.forEach((c) => c.hello?.client === "web" && send(c, msg));
+
+/** Start ねこ's conversation over, and tell every client. A button press (or a swipe on the board) always gets an answer, so it shows. */
+function clearChat(reason: "button" | "idle") {
+  clearTimeout(idleTimer);
+  if (!history.length && reason === "idle") return;
+  history.length = 0;
+  log.info(`ねこ's conversation started over (${reason})`);
+  sendAll({ type: "chat_cleared", reason });
+}
 
 /** Broadcast the pet's state. With `holdMs`, return to the resting state afterwards. */
 function setState(anim?: Anim, mood?: Mood, holdMs?: number) {
@@ -151,6 +167,8 @@ async function onConfirm(c: Client, text: string) {
     log.info({ reply: reply.ja }, `reply ${spoken.value.ms}ms`);
     history.push({ role: "user", content: text }, { role: "assistant", content: reply.ja });
     history.splice(0, Math.max(0, history.length - 24));
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => clearChat("idle"), CHAT_IDLE_MS).unref();
     records.logTurn(text, correction, reply);
     await say(c, reply.ja, reply.en, reply.mood);
     if (revertTimer) eatNext = true; // still talking: eat afterwards
@@ -244,6 +262,8 @@ async function onMessage(c: Client, msg: ClientMessage) {
       return onAsk(c, msg.text, "grammar");
     case "ask_casual":
       return onAsk(c, msg.text, "casual");
+    case "chat_reset":
+      return clearChat("button");
     case "ask_reset":
       if (msg.kind === "grammar" || msg.kind === "casual") resetConversation(msg.kind);
       return;
