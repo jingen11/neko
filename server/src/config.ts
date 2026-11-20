@@ -23,7 +23,7 @@ export const config = {
   hermesProProfile: process.env.HERMES_PRO_PROFILE ?? "pro",
   /** Key = API_SERVER_KEY in ~/.hermes/profiles/<profile>/.env. */
   hermesProKey: process.env.HERMES_PRO_KEY ?? "",
-  /** Hermes profile that writes ねこ's spoken replies, with tools for the world right now (time, weather). */
+  /** Hermes profile that writes ねこ's spoken replies, with tools for the world right now (time, weather) and the house (lights and fans). */
   hermesNekoProfile: process.env.HERMES_NEKO_PROFILE ?? "neko",
   /** Key = API_SERVER_KEY in ~/.hermes/profiles/<profile>/.env. */
   hermesNekoKey: process.env.HERMES_NEKO_KEY ?? "",
