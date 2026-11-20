@@ -167,7 +167,7 @@ function onMessage(m: ServerMessage) {
       break;
     case "correction":
       thinking = false;
-      if (tab === "neko") sendBtn.disabled = false;
+      if (tab === "neko") sendBtn.disabled = newConvBtn.disabled = false;
       showCorrection(m);
       break;
     case "answer":
@@ -175,6 +175,10 @@ function onMessage(m: ServerMessage) {
       break;
     case "ask_history":
       showHistory(m);
+      break;
+    case "chat_cleared":
+      chatDivider(m.reason === "idle" ? "New conversation (quiet for 30 minutes)" : "New conversation");
+      if (m.reason === "button") toast("New conversation: ねこ won't see the earlier lines.");
       break;
     case "sensor":
       showSensor(m);
@@ -193,7 +197,7 @@ function onMessage(m: ServerMessage) {
       }
       lastUserEntry?.querySelector(".check.wait")?.remove();
       thinking = false;
-      if (tab === "neko") sendBtn.disabled = false;
+      if (tab === "neko") sendBtn.disabled = newConvBtn.disabled = false;
       setTalk("idle");
       toast(m.message);
       break;
@@ -302,8 +306,7 @@ function setTab(t: Tab, focus = false) {
   textEl.lang = TABS[t].lang;
   $("text").previousElementSibling!.textContent = TABS[t].sr;
   talkBtn.hidden = asking;
-  newConvBtn.hidden = !asking;
-  newConvBtn.disabled = !awake || (asking && !!pending[t as AskKind]);
+  newConvBtn.disabled = !awake || (asking ? !!pending[t as AskKind] : thinking);
   $("keys").innerHTML = asking ? "<kbd>Enter</kbd> ask · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line" : "<kbd>Space</kbd> hold to talk · <kbd>Enter</kbd> send";
   sendBtn.textContent = asking ? "Ask" : "Send";
   sendBtn.disabled = !awake || (asking ? !!pending[t as AskKind] : thinking);
@@ -336,7 +339,12 @@ for (const b of document.querySelectorAll<HTMLButtonElement>(".ask-empty .try bu
   });
 
 newConvBtn.addEventListener("click", () => {
-  if (tab === "neko" || pending[tab]) return;
+  // ねこ's conversation is the server's: it answers with chat_cleared, to every page.
+  if (tab === "neko") {
+    if (!thinking) net.send({ type: "chat_reset" });
+    return;
+  }
+  if (pending[tab]) return;
   net.send({ type: "ask_reset", kind: tab });
   clearThread(tab);
   lastModel[tab] = "";
@@ -426,7 +434,7 @@ function send() {
   }
   if (!text || thinking || !awake) return;
   thinking = true;
-  sendBtn.disabled = true;
+  sendBtn.disabled = newConvBtn.disabled = true;
   textEl.value = "";
   net.send({ type: "confirm", text });
   lastUserEntry = userEntry(text);
@@ -473,6 +481,16 @@ function userEntry(text: string) {
   if (tab === "neko") $("turnCount").textContent = `${plural(sentences, "sentence")} this visit`;
   scrollChat();
   return e;
+}
+
+/** A line across ねこ's chat where its conversation started over. The earlier lines stay: they're your practice. */
+function chatDivider(label: string) {
+  if (!chat.querySelector(".msg")) return;
+  const e = document.createElement("p");
+  e.className = "chat-divider";
+  e.textContent = label;
+  chat.append(e);
+  scrollChat();
 }
 
 /** The cat's line: Japanese, with the English behind a tap and replay on the latest line only. */
