@@ -47,4 +47,8 @@ export const config = {
   publicDir: path.join(root, "public"),
   /** home.db (alarm sessions and what the sensors did while armed) */
   dataDir: process.env.HOME_DATA_DIR ?? path.join(root, "data"),
+  /** ntfy topic URL that alarms are posted to, e.g. http://127.0.0.1:2586/home; no notifications while empty */
+  ntfyUrl: process.env.NTFY_URL ?? "",
+  /** opened when a notification is tapped */
+  dashboardUrl: process.env.DASHBOARD_URL ?? "https://dash.home.je-dev.com",
 };

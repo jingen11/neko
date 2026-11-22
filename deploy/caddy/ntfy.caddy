@@ -1,0 +1,11 @@
+# ntfy push notifications at https://ntfy.home.je-dev.com.
+# Goes inside the existing *.home.je-dev.com block in the Caddyfile, above the final
+# `handle { abort }`. Needs its own DNS record (A -> the box's Tailscale IP): the
+# wildcard *.home.je-dev.com points at llm-gateway. No login: tailnet devices only.
+	@ntfy host ntfy.home.je-dev.com
+	handle @ntfy {
+		# the phone app subscribes over a long-lived JSON stream / WebSocket
+		reverse_proxy 127.0.0.1:2586 {
+			flush_interval -1
+		}
+	}

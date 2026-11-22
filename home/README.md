@@ -69,6 +69,8 @@ On the dashboard, the **Alarm** tab shows the state, arm/disarm, and the alarms:
 
 Each armed stretch is a session (`alarm_sessions`). While one is open, every live sensor change and every board going online or offline is written to `alarm_events`, with the device's room or opening. Retained values replayed on reconnect aren't logged.
 
+Each alarm is also sent as a push notification when `NTFY_URL` is set (e.g. `http://127.0.0.1:2586/home`, the ntfy server on the box at https://ntfy.home.je-dev.com; Caddy block in `deploy/caddy/ntfy.caddy`). Only while armed, and only alarms: someone detected, a door or window opening, a vibration, a diagnostic warning turning on, or a board going offline. One notification per device and kind a minute, so a presence sensor flickering doesn't spam; tapping it opens the dashboard.
+
 ```bash
 curl -X PUT  localhost:8090/api/alarm/periods -H 'content-type: application/json' -d '[{"start":"23:00","end":"07:00","days":["mon","tue","wed","thu","fri"]},{"start":"01:00","end":"09:00","days":["sat","sun"]}]'
 curl -X POST localhost:8090/api/alarm/away    -H 'content-type: application/json' -d '{"from":"2026-12-20","to":"2026-12-27","note":"trip"}'
