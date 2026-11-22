@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { subscribe, type Update } from "./broker.ts";
 import { config, layout } from "./config.ts";
+import { notifyAlarm } from "./notify.ts";
 
 /**
  * The alarm, kept in home.db so a restart doesn't drop it.
@@ -318,6 +319,10 @@ function record(u: Update) {
     if (e.diagnostic && e.component !== "binary_sensor") return;
     const place = layout.devices[e.device];
     qInsert.run(current.id, e.at, "entity", e.device, e.id, e.name, place?.room ?? null, place?.opening ?? null, JSON.stringify(e.value), e.unit);
+    // the same test as TRIGGER: something turning on is an alarm
+    if (e.value === true) {
+      notifyAlarm({ kind: "entity", device: e.device, label: place?.label ?? e.device, deviceClass: e.deviceClass, name: e.name, opening: place?.opening ?? null, at: e.at });
+    }
   } else if (u.type === "device") {
     const d = u.device;
     // device updates also fire for discovery and IP changes; only log live online/offline flips,
@@ -325,6 +330,9 @@ function record(u: Update) {
     if (d.available === null || d.availableAt === null || availLogged.get(d.id) === d.availableAt) return;
     availLogged.set(d.id, d.availableAt);
     qInsert.run(current.id, d.availableAt, "availability", d.id, null, null, d.room, d.opening, JSON.stringify(d.available), null);
+    if (!d.available) {
+      notifyAlarm({ kind: "availability", device: d.id, label: d.label, deviceClass: null, name: null, opening: d.opening, at: d.availableAt });
+    }
   }
 }
 
