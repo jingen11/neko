@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { subscribe, type Update } from "./broker.ts";
+import { type Entity, entity, subscribe, type Update } from "./broker.ts";
 import { config, layout } from "./config.ts";
 import { notifyAlarm } from "./notify.ts";
 
@@ -69,6 +69,10 @@ db.exec(`
 // databases from before periods had days: their periods ran every day, and still do
 if (!(db.prepare("PRAGMA table_info(alarm_periods)").all() as { name: string }[]).some((c) => c.name === "days")) {
   db.exec("ALTER TABLE alarm_periods ADD COLUMN days INTEGER NOT NULL DEFAULT 127");
+}
+// events from before the alarm flag: null, and TRIGGER falls back to the old rule for them
+if (!(db.prepare("PRAGMA table_info(alarm_events)").all() as { name: string }[]).some((c) => c.name === "alarm")) {
+  db.exec("ALTER TABLE alarm_events ADD COLUMN alarm INTEGER");
 }
 
 // ---- types ----
@@ -223,11 +227,12 @@ const qDisarm = db.prepare("UPDATE alarm_sessions SET disarmed_at = ? WHERE disa
 const qSessions = db.prepare("SELECT * FROM alarm_sessions ORDER BY id DESC LIMIT ?");
 const qEvents = db.prepare("SELECT * FROM alarm_events WHERE session_id = ? ORDER BY at, id");
 /** an alarm: something turned on while armed (someone detected, a door or window opened, a vibration) or a board went offline */
-const TRIGGER = "((kind = 'entity' AND value = 'true') OR (kind = 'availability' AND value = 'false'))";
+const TRIGGER =
+  "(alarm = 1 OR (alarm IS NULL AND ((kind = 'entity' AND value = 'true') OR (kind = 'availability' AND value = 'false'))))";
 const qAlarms = db.prepare(`SELECT * FROM alarm_events WHERE ${TRIGGER} AND (at < ? OR (at = ? AND id < ?)) ORDER BY at DESC, id DESC LIMIT ?`);
 const qAlarmsSince = db.prepare(`SELECT COUNT(*) AS n FROM alarm_events WHERE ${TRIGGER} AND at >= ?`);
 const qInsert = db.prepare(
-  "INSERT INTO alarm_events (session_id, at, kind, device, entity, name, room, opening, value, unit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "INSERT INTO alarm_events (session_id, at, kind, device, entity, name, room, opening, value, unit, alarm) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 );
 
 let current: AlarmSession | null = (() => {
@@ -304,6 +309,20 @@ export const alarmsSince = (t: number) => Number((qAlarmsSince.get(t) as Row).n)
 
 // ---- logging ----
 
+const PRESENCE = ["occupancy", "presence", "motion"];
+
+/**
+ * Whether a logged change is an alarm: something turning on. A presence board with an Intruder sensor
+ * (the PIR and the mmWave agreeing, see sensors/presence-base.yaml) alarms on that alone; its own
+ * Occupied and PIR are still logged but either one alone is too easily fooled (a fan, a curtain, heat).
+ */
+function isAlarm(e: Entity): boolean {
+  if (e.value !== true) return false;
+  const intruder = `${e.device}/intruder`;
+  if (e.id !== intruder && PRESENCE.includes(e.deviceClass ?? "") && entity(intruder)) return false;
+  return true;
+}
+
 /** availableAt of the last online/offline flip logged per device */
 const availLogged = new Map<string, number>();
 
@@ -318,9 +337,9 @@ function record(u: Update) {
     // Diagnostic on/off readings stay: battery_low, or the bridge's restart_required, turning on is an alarm.
     if (e.diagnostic && e.component !== "binary_sensor") return;
     const place = layout.devices[e.device];
-    qInsert.run(current.id, e.at, "entity", e.device, e.id, e.name, place?.room ?? null, place?.opening ?? null, JSON.stringify(e.value), e.unit);
-    // the same test as TRIGGER: something turning on is an alarm
-    if (e.value === true) {
+    const alarm = isAlarm(e);
+    qInsert.run(current.id, e.at, "entity", e.device, e.id, e.name, place?.room ?? null, place?.opening ?? null, JSON.stringify(e.value), e.unit, alarm ? 1 : 0);
+    if (alarm) {
       notifyAlarm({ kind: "entity", device: e.device, label: place?.label ?? e.device, deviceClass: e.deviceClass, name: e.name, opening: place?.opening ?? null, at: e.at });
     }
   } else if (u.type === "device") {
@@ -329,7 +348,7 @@ function record(u: Update) {
     // which are the ones that set a new availableAt
     if (d.available === null || d.availableAt === null || availLogged.get(d.id) === d.availableAt) return;
     availLogged.set(d.id, d.availableAt);
-    qInsert.run(current.id, d.availableAt, "availability", d.id, null, null, d.room, d.opening, JSON.stringify(d.available), null);
+    qInsert.run(current.id, d.availableAt, "availability", d.id, null, null, d.room, d.opening, JSON.stringify(d.available), null, d.available ? 0 : 1);
     if (!d.available) {
       notifyAlarm({ kind: "availability", device: d.id, label: d.label, deviceClass: null, name: null, opening: d.opening, at: d.availableAt });
     }

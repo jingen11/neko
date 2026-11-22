@@ -3,6 +3,8 @@
 # `max_range_cm` in its own substitutions.
 substitutions:
   max_range_cm: "300"   # detections farther than this count as nobody there
+  agree_window_ms: "5000"  # Intruder: how long after a PIR pulse the mmWave may still come on and agree
+  intruder_hold: "10s"     # Intruder stays ON this long after the sensors last agreed
 
 esphome:
   name: ${name}
@@ -66,6 +68,13 @@ binary_sensor:
   - platform: template
     id: mmwave
     internal: true
+    on_press:
+      # the mmWave can pick someone up just after the PIR pulse: still counts as both agreeing
+      - if:
+          condition:
+            lambda: return id(last_pir_ms) != 0 && millis() - id(last_pir_ms) <= ${agree_window_ms};
+          then:
+            - script.execute: intruder_seen
 
   # Someone is there if either sensor says so: the mmWave sees people sitting still,
   # the PIR catches movement the mmWave misses (or ignores beyond max_range_cm).
@@ -85,6 +94,40 @@ binary_sensor:
       number: GPIO5
       mode: INPUT            # AM312 drives the pin both HIGH and LOW; a pull-down drags its weak HIGH below the C6's threshold
     device_class: motion
+    on_press:
+      - lambda: id(last_pir_ms) = millis();
+      - if:
+          condition:
+            binary_sensor.is_on: mmwave
+          then:
+            - script.execute: intruder_seen
+
+  # Someone for sure: the PIR fired and the mmWave agrees (on at that moment, or within agree_window_ms after).
+  # Either sensor alone can be fooled (the mmWave by a fan or curtain, the PIR by heat), both at once rarely are.
+  # The PIR pulse is only ~2 s, so this holds ON for intruder_hold to make one clear event per person.
+  # The home server's alarm counts only this on a board that has it; Occupied and PIR are still logged.
+  - platform: template
+    id: intruder
+    name: Intruder           # -> ${name}/binary_sensor/intruder/state  ON | OFF
+    device_class: occupancy
+
+globals:
+  - id: last_pir_ms          # millis() of the last PIR pulse; 0 = none yet
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+script:
+  - id: intruder_seen
+    mode: restart            # another agreement while ON keeps it ON for a fresh intruder_hold
+    then:
+      - binary_sensor.template.publish:
+          id: intruder
+          state: ON
+      - delay: ${intruder_hold}
+      - binary_sensor.template.publish:
+          id: intruder
+          state: OFF
 
 sensor:
   - platform: template
