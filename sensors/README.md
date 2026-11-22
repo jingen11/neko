@@ -39,6 +39,7 @@ The sensor's own max-gate setting isn't used: the vendor wiki documents reading 
 | `<board>/status` | `online` / `offline` (offline about a minute after the board loses power) | yes |
 | `<board>/binary_sensor/occupied/state` | `ON` / `OFF`, on change. `ON` while the mmWave sees someone within `max_range_cm` (default 300) **or** the PIR sees motion; goes `OFF` after 5 s with neither | yes |
 | `<board>/binary_sensor/pir/state` | `ON` / `OFF`: AM312 PIR on GPIO5, on for ~2 s per motion | yes |
+| `<board>/binary_sensor/intruder/state` | `ON` / `OFF`: the PIR fired while the mmWave sees someone (or the mmWave came on within `agree_window_ms`, default 5 s, after the pulse); stays `ON` for `intruder_hold` (10 s). The home alarm counts only this on a board that has it | yes |
 | `<board>/sensor/distance/state` | cm to the detected person; median-filtered, at most once a second, only on a change of 15 cm or more; only updates while someone is within range | yes |
 | `<board>/debug` | ESPHome log lines | no |
 
