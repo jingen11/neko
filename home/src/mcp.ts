@@ -3,7 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { rooms } from "./areas.ts";
-import { command, snapshot } from "./broker.ts";
+import { command, setSpeed, snapshot } from "./broker.ts";
 import { LOAD_KINDS } from "./config.ts";
 
 /**
@@ -12,7 +12,7 @@ import { LOAD_KINDS } from "./config.ts";
  * knows what each switch drives (layout.json `loads`).
  *
  *   list_appliances  every light and fan: name, kind, room, on or off, online or not
- *   set_appliance    turn lights or fans on or off, picked by id, or by room, kind and name
+ *   set_appliance    turn lights or fans on or off, or set a fan's speed, picked by id, or by room, kind and name
  *
  * Only switches given an appliance on the Devices tab are here; a plug with nothing assigned isn't.
  * No key: the dashboard, and so /mcp, is only reachable on the tailnet.
@@ -27,6 +27,9 @@ interface Appliance {
   floor: string | null;
   on: boolean | null; // null until the switch has reported
   online: boolean;
+  /** a fan with speeds (an ESPHome fan entity): its speed and how many it has; null otherwise */
+  speed: number | null;
+  speeds: number | null;
 }
 
 const ROOM = new Map(rooms.map((r) => [r.id, r]));
@@ -53,14 +56,18 @@ function appliances(): Appliance[] {
         floor: room ? FLOOR[room.floor] : null,
         on: typeof e.value === "boolean" ? e.value : null,
         online: connected && d.available !== false,
+        speed: e.speed,
+        speeds: e.speeds,
       }];
     })
     .sort((a, b) => (a.roomName ?? "").localeCompare(b.roomName ?? "") || a.name.localeCompare(b.name));
 }
 
 const where = (a: Appliance) => (a.roomName ? `${a.roomName}, ${a.floor}` : "no room");
+const speedOf = (a: Appliance) => (a.speeds ? `, speed ${a.speed ?? "?"} of ${a.speeds}` : "");
 const line = (a: Appliance) =>
-  `- ${a.name} (${a.kind}) in ${where(a)}: ${!a.online ? "offline" : a.on === null ? "state unknown" : a.on ? "on" : "off"} [id ${a.id}]`;
+  `- ${a.name} (${a.kind}) in ${where(a)}: ${!a.online ? "offline" : a.on === null ? "state unknown" : a.on ? `on${speedOf(a)}` : "off"}` +
+  `${a.speeds ? ` (speeds 1-${a.speeds})` : ""} [id ${a.id}]`;
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const fail = (t: string) => ({ ...text(t), isError: true });
@@ -73,8 +80,9 @@ function build() {
 
   server.registerTool("list_appliances", {
     description:
-      "The lights and fans in the house that can be switched, each with its room, whether it is on or off, and whether " +
-      "its switch is online. Use it to answer 'is the light on?' or to find the right one before switching.",
+      "The lights and fans in the house that can be switched, each with its room, whether it is on or off (and a fan's " +
+      "speed, when it has speeds), and whether its switch is online. Use it to answer 'is the light on?' or to find " +
+      "the right one before switching. A fan's on/off and speed are what was last sent or heard from its remote.",
     annotations: { readOnlyHint: true },
   }, async () => {
     const list = appliances();
@@ -83,36 +91,44 @@ function build() {
 
   server.registerTool("set_appliance", {
     description:
-      "Turn lights or fans on or off. Pick them by `id` (from list_appliances), or by `room`, `kind` and/or `name`: " +
+      "Turn lights or fans on or off, or set a fan's speed (which also turns it on). Pick them by `id` (from " +
+      "list_appliances), or by `room`, `kind` and/or `name`: " +
       "every appliance that matches all the ones given is switched, so room 'living' with kind 'light' switches every " +
       "light in the living area. Give at least one. Says what was switched and what couldn't be (an offline switch). " +
       `Rooms: ${roomList}.`,
     inputSchema: {
-      on: z.boolean().describe("true to turn on, false to turn off"),
+      on: z.boolean().optional().describe("true to turn on, false to turn off; can be left out when giving a speed"),
+      speed: z.number().int().min(1).optional().describe("A fan's speed, 1 (slowest) up to its number of speeds; turns it on"),
       id: z.string().optional().describe("One appliance's id from list_appliances"),
       room: z.enum(roomIds).optional().describe("A room id"),
       kind: z.enum(LOAD_KINDS).optional().describe("light or fan"),
       name: z.string().optional().describe("Part of the appliance's name, e.g. 'lobby'"),
     },
     annotations: { destructiveHint: false, idempotentHint: true },
-  }, async ({ on, id, room, kind, name }) => {
+  }, async ({ on, speed, id, room, kind, name }) => {
     if (!id && !room && !kind && !name) return fail("Say which: give an id, a room, a kind or a name.");
+    if (on === undefined && speed === undefined) return fail("Say what to do: give on (true or false) or a speed.");
+    // a speed turns the fan on, so "off at speed 3" is just off
+    const bySpeed = speed !== undefined && on !== false;
     const all = appliances();
     const q = name?.trim().toLowerCase();
     const picked = all.filter((a) =>
-      (!id || a.id === id) && (!room || a.room === room) && (!kind || a.kind === kind) && (!q || a.name.toLowerCase().includes(q)),
+      (!id || a.id === id) && (!room || a.room === room) && (!kind || a.kind === kind) && (!q || a.name.toLowerCase().includes(q)) &&
+      // a speed only goes to fans with speeds: "the living room to 3" mustn't also switch its light
+      (!bySpeed || !!a.speeds),
     );
     if (!picked.length)
       return fail(`Nothing matches. The lights and fans are:\n${all.map(line).join("\n") || "(none set up)"}`);
     const done: string[] = [];
     const failed: string[] = [];
     for (const a of picked) {
-      const r = await command(a.id, on).catch(() => "offline" as const);
+      const r = await (bySpeed ? setSpeed(a.id, speed!) : command(a.id, on!)).catch(() => "offline" as const);
       if (r === "ok") done.push(`${a.name} in ${where(a)}`);
-      else failed.push(`${a.name} in ${where(a)} (${r === "offline" ? "its switch is offline" : "not found"})`);
+      else
+        failed.push(`${a.name} in ${where(a)} (${r === "offline" ? "its switch is offline" : r === "range" ? `its speeds are 1 to ${a.speeds}` : "not found"})`);
     }
     const out = [
-      done.length ? `Turned ${on ? "on" : "off"}: ${done.join("; ")}.` : "",
+      done.length ? (bySpeed ? `Set to speed ${speed}: ${done.join("; ")}.` : `Turned ${on ? "on" : "off"}: ${done.join("; ")}.`) : "",
       failed.length ? `Could not switch: ${failed.join("; ")}.` : "",
     ].filter(Boolean).join("\n");
     return done.length ? text(out) : fail(out);

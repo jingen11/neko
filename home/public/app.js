@@ -776,13 +776,16 @@ const appliances=room=>[...live.devices.values()]
   .filter(a=>a.r&&(!room||a.r===room))
   .sort((a,b)=>a.r.name.localeCompare(b.r.name)||loadName(a.e).localeCompare(loadName(b.e)));
 const isRunning=a=>a.e.value===true&&a.d.available!==false;
+/** how hard a running appliance runs, 0..1: a fan with speeds by its speed (the slowest still turns), anything else 1 */
+const runLevel=a=>!isRunning(a)?0:a.e.speeds&&a.e.speed?.35+.65*(a.e.speed-1)/Math.max(1,a.e.speeds-1):1;
 const sw={busy:new Map(),error:null}; // entity id -> when the command went out
-async function flip(id){
+/** body: {on} to switch, {speed} to set a fan's speed (which turns it on) */
+async function flip(id,body){
   const e=live.entities.get(id); if(!e||sw.busy.has(id))return;
   const [node,obj]=[e.id.slice(0,e.id.lastIndexOf('/')),objOf(e)];
   const t=Date.now(); sw.busy.set(id,t); sw.error=null; render();
   try{
-    const r=await fetch(`api/switches/${encodeURIComponent(node)}/${encodeURIComponent(obj)}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({on:e.value!==true})});
+    const r=await fetch(`api/switches/${encodeURIComponent(node)}/${encodeURIComponent(obj)}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{on:e.value!==true})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
     // the button stays busy until the switch reports its new state (apply() clears it), or gives up after a while
@@ -794,21 +797,35 @@ function switchBtn(e,d){
   return `<button class="sw${on?' on':''}" data-sw="${esc(e.id)}" aria-pressed="${on}" aria-label="${esc(loadName(e))}"${off||e.value===null?' disabled':''}>
     <span class="knob"></span><span class="sw-word">${busy?'…':off?'Offline':e.value===null?'—':on?'On':'Off'}</span></button>`;
 }
+/** a fan with speeds: one button per speed, the one it runs at marked. A speed turns it on. */
+function speedBtns(e,d){
+  if(!e.speeds)return '';
+  const off=d.available===false||e.value===null, busy=sw.busy.has(e.id), on=e.value===true&&!off;
+  return `<div class="speeds" role="group" aria-label="${esc(loadName(e))} speed">${Array.from({length:e.speeds},(_,i)=>i+1).map(n=>{
+    const cur=on&&e.speed===n;
+    return `<button class="spd${cur?' on':''}" data-speed="${esc(e.id)}" data-n="${n}" aria-pressed="${cur}" aria-label="Speed ${n}"${off||busy?' disabled':''}>${n}</button>`;
+  }).join('')}</div>`;
+}
 function applianceRow({e,d,r},showRoom){
   const l=loadOf(e),on=e.value===true&&d.available!==false;
-  return `<li class="appl"><span class="ico ${on?'on':d.available===false?'off':''}">${IMG(KIND[l.kind]?.icon||'power')}</span>
-    <span class="appl-name"><b>${esc(loadName(e))}</b><small>${showRoom?esc(r.name)+' · ':''}${esc(d.label)} · ${esc(switchName(e).toLowerCase())}</small></span>
-    ${switchBtn(e,d)}</li>`;
+  // a fan entity (sensors/rf-remote) is driven by radio with no reply: its state is what was last sent or heard from its remote
+  const how=e.component==='fan'?'as last sent':switchName(e).toLowerCase();
+  return `<li class="appl${e.speeds?' has-speeds':''}"><span class="ico ${on?'on':d.available===false?'off':''}">${IMG(KIND[l.kind]?.icon||'power')}</span>
+    <span class="appl-name"><b>${esc(loadName(e))}</b><small>${showRoom?esc(r.name)+' · ':''}${esc(d.label)} · ${esc(how)}</small></span>
+    ${switchBtn(e,d)}${speedBtns(e,d)}</li>`;
 }
 /* Switch buttons are found by their switch id, not by element: readings redraw the panel up to once a second, and a
    button replaced between press and release would lose the click. Bound once on the panel and the room card. */
 function bindSwitches(el){
   let down=null;
-  const at=ev=>{const b=ev.target.closest('[data-sw]');return b&&!b.disabled?b.dataset.sw:null;}; // pointer events reach disabled buttons too
+  // a switch button is "<id>", a fan's speed button "<id>#<n>"
+  const keyOf=b=>b.dataset.sw??`${b.dataset.speed}#${b.dataset.n}`;
+  const at=ev=>{const b=ev.target.closest('[data-sw],[data-speed]');return b&&!b.disabled?keyOf(b):null;}; // pointer events reach disabled buttons too
+  const go=k=>{const i=k.lastIndexOf('#');if(i<0)flip(k);else flip(k.slice(0,i),{speed:Number(k.slice(i+1))});};
   el.addEventListener('pointerdown',ev=>{down=ev.button===0?at(ev):null;});
-  el.addEventListener('pointerup',ev=>{const k=at(ev);if(k&&k===down)flip(k);down=null;});
+  el.addEventListener('pointerup',ev=>{const k=at(ev);if(k&&k===down)go(k);down=null;});
   // keyboard (Enter, Space) clicks have no pointer
-  el.addEventListener('click',ev=>{const b=ev.target.closest('[data-sw]');if(b&&ev.detail===0)flip(b.dataset.sw);});
+  el.addEventListener('click',ev=>{const b=ev.target.closest('[data-sw],[data-speed]');if(b&&!b.disabled&&ev.detail===0)go(keyOf(b));});
 }
 
 /** st: 'on' someone there · 'clear' · 'offline' (every presence sensor offline: its last reading isn't counted)
@@ -919,7 +936,8 @@ function moveLamp(l,x,z){
   const y=l.bulb.position.y;
   l.bulb.position.set(x,y,z); l.halo.position.set(x,y,z); l.cord.position.set(x,y+15,z); l.light.position.set(x/100,(y-10)/100,z/100);
 }
-/* a ceiling fan in every room with a fan assigned to a switch: spins up while it's on and runs down when it's off.
+/* a ceiling fan in every room with a fan assigned to a switch: spins up while it's on (faster at a higher speed, for a
+   fan with speeds) and runs down when it's off.
    With reduced motion the blades stay still; the ring under the hub shows on or off either way. */
 const C_FAN_ON=new THREE.Color(0xf39a38),C_FAN_OFF=new THREE.Color(0x9aa3ad);
 const fans=[];
@@ -945,7 +963,7 @@ function stepFans(dt){
   fans.forEach(f=>{
     f.k+=(f.target-f.k)*Math.min(1,dt*1.2); if(Math.abs(f.target-f.k)<.002)f.k=f.target; // a couple of seconds to spin up or run down
     if(!noMotion.matches)f.rotor.rotation.y-=f.k*dt*2*Math.PI*1.3;
-    f.ring.material.color.copy(C_FAN_OFF).lerp(C_FAN_ON,f.target);
+    f.ring.material.color.copy(C_FAN_OFF).lerp(C_FAN_ON,f.target>0?1:0);
   });
 }
 /** a room with both a lamp and a fan: one each side of the middle, along the room's long side */
@@ -976,7 +994,7 @@ function paint(){
     if(lights.length)lampOf(r).target=lights.some(isRunning)&&!hidden?1:0;
     else if(devicesIn(r).some(d=>occupancyOf(d.id)))lampOf(r).target=on&&!hidden?1:0;
     else if(r.lamp)r.lamp.target=0;
-    if(fansHere.length)fanOf(r).target=fansHere.some(isRunning)?1:0;
+    if(fansHere.length)fanOf(r).target=Math.max(0,...fansHere.map(runLevel));
     else if(r.fan)r.fan.target=0;
     if(r.fan)r.fan.grp.visible=fansHere.length>0;
     placeFixtures(r);
@@ -1635,7 +1653,7 @@ function apply(msg){
   else if(msg.type==='device-removed'){live.devices.delete(msg.id);refreshLogSoon();}
   else if(msg.type==='entity'){
     const was=live.entities.get(msg.entity.id);
-    if(sw.busy.has(msg.entity.id)&&was?.value!==msg.entity.value)sw.busy.delete(msg.entity.id);
+    if(sw.busy.has(msg.entity.id)&&(was?.value!==msg.entity.value||was?.speed!==msg.entity.speed))sw.busy.delete(msg.entity.id);
     live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);refreshLogSoon();}
   else if(msg.type==='alarm'){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   else if(msg.type==='broker')live.brokerUp=msg.connected;

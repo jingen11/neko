@@ -332,7 +332,7 @@ function record(u: Update) {
     const e = u.entity;
     if (e.at === null) return; // retained replay, not a live change
     // turning a light or fan on isn't an intrusion (and a switch reading "true" would count as an alarm)
-    if (e.component === "switch") return;
+    if (e.component === "switch" || e.component === "fan") return;
     // diagnostic numbers (battery %, voltage, link quality) change on almost every message: not worth logging.
     // Diagnostic on/off readings stay: battery_low, or the bridge's restart_required, turning on is an alarm.
     if (e.diagnostic && e.component !== "binary_sensor") return;

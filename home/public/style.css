@@ -322,6 +322,14 @@ button.tool:active img{transform:scale(.88)}
 .sw:active:not(:disabled) .knob{transform:scale(.9)}
 .sw:disabled{opacity:.5;cursor:default}
 .sw-word{flex:1;text-align:center}
+/* a fan's speeds, under its row: one button each, the current one warm */
+.appl .speeds{grid-column:2/-1;display:flex;flex-wrap:wrap;gap:6px}
+.spd{min-width:40px;min-height:40px;padding:0 6px;border:1px solid var(--line-2);border-radius:12px;background:#fff;font:600 14px var(--f-mono);color:var(--muted);
+  cursor:pointer;touch-action:manipulation;transition:background .15s,border-color .15s,color .15s}
+.spd.on{background:var(--warm-weak);border-color:var(--warm);color:var(--warm-ink)}
+.spd:hover:not(:disabled){border-color:var(--accent)}
+.spd:focus-visible{outline:none;box-shadow:var(--glow)}
+.spd:disabled{opacity:.5;cursor:default}
 .facts dd.sw-fact{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .dev-edit fieldset.load{margin:0;padding:0;border:0;display:grid;grid-template-columns:minmax(0,9rem) minmax(0,1fr);gap:6px 8px;min-width:0}
 .dev-edit fieldset.load legend{grid-column:1/-1;padding:0;margin-bottom:6px}

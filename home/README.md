@@ -4,7 +4,7 @@ The house at a glance on https://dash.home.je-dev.com: a 3D twin of the house (T
 
 ## What it reads
 
-Nothing is hard-coded per sensor. The server subscribes to Home Assistant MQTT discovery (`homeassistant/#`), which ESPHome publishes for every sensor, and builds the device list from that. Zigbee2MQTT devices show up the same way once its `homeassistant` option is on. Shown: `sensor` and `binary_sensor` entities, and `switch` entities (a wall switch's rockers, a plug's relay) that can be turned on and off. A switch's settings (`entity_category: config`, such as an Aqara rocker's *lock relay*) and Zigbee2MQTT's *permit join* are left out.
+Nothing is hard-coded per sensor. The server subscribes to Home Assistant MQTT discovery (`homeassistant/#`), which ESPHome publishes for every sensor, and builds the device list from that. Zigbee2MQTT devices show up the same way once its `homeassistant` option is on. Shown: `sensor` and `binary_sensor` entities, `switch` entities (a wall switch's rockers, a plug's relay) that can be turned on and off, and `fan` entities (the fan remote board, `sensors/rf-remote.yaml`), which also have a speed. A switch's settings (`entity_category: config`, such as an Aqara rocker's *lock relay*) and Zigbee2MQTT's *permit join* are left out.
 
 - Online / offline comes from each entity's availability topic (`<board>/status`). An offline board's last reading is never counted as someone being there.
 - `esphome/discover/<board>` gives each board's IP.
@@ -50,7 +50,15 @@ Each switch can be given the appliance it drives, a `light` or a `fan`, with an 
   "loads": { "switch_top": { "kind": "light", "label": "Lobby light", "room": "lobby" }, "switch_center": { "kind": "fan" } } }
 ```
 
-Assigned appliances are listed under **Lights and fans** on the overview and in their room's card, each with an on/off button. A button shows the new state only once the switch reports it. Switches never count toward the alarm.
+Assigned appliances are listed under **Lights and fans** on the overview and in their room's card, each with an on/off button. A button shows the new state only once the switch reports it. Switches and fans never count toward the alarm.
+
+A `fan` entity is assigned the same way (its object id, e.g. `living_room_fan` on `rf-remote`, with its own room) and gets a button per speed under its row; a speed turns it on. Its state is what the board last sent or heard from the real remote, so the row says "as last sent". In the 3D house its ceiling fan spins faster at a higher speed.
+
+```json
+"rf-remote": { "label": "Fan remote", "room": "living",
+  "loads": { "living_room_fan": { "kind": "fan", "label": "Living room fan" }, "dining_room_fan": { "kind": "fan", "label": "Dining room fan", "room": "dining" },
+             "master_bedroom_fan": { "kind": "fan", "label": "Master bedroom fan", "room": "master" }, "upper_living_fan": { "kind": "fan", "label": "Upper living fan", "room": "uliving" } } }
+```
 
 In the 3D house, a room with a light gets a ceiling lamp that's lit while the light is on; a room with a fan gets a ceiling fan that spins while it runs (still, with an orange ring under the hub, under reduced motion). A room with a presence sensor and no light assigned keeps its lamp for presence; with a light assigned, presence shows only as the warm floor.
 
@@ -79,6 +87,7 @@ curl -X POST localhost:8090/api/alarm/away    -H 'content-type: application/json
 curl -X POST localhost:8090/api/alarm         -H 'content-type: application/json' -d '{"armed":true}'
 curl -X PATCH localhost:8090/api/devices/ground_floor_smart_plug -H 'content-type: application/json' -d '{"label":"Lobby plug","room":"lobby"}'
 curl -X POST  localhost:8090/api/switches/0x54ef44100196dcde/switch_top -H 'content-type: application/json' -d '{"on":true}'
+curl -X POST  localhost:8090/api/switches/rf-remote/living_room_fan -H 'content-type: application/json' -d '{"speed":3}'
 ```
 
 ## ねこ's house tools (MCP)
@@ -87,8 +96,8 @@ curl -X POST  localhost:8090/api/switches/0x54ef44100196dcde/switch_top -H 'cont
 
 | Tool | What it does |
 |---|---|
-| `list_appliances()` | every light and fan: name, kind, room and floor, on/off, online or offline |
-| `set_appliance(on, id?, room?, kind?, name?)` | switches every appliance matching all the filters given (at least one): `room: "living", kind: "light"` is every light in the living area; `name` matches part of the name. Says what was switched and what wasn't (an offline switch) |
+| `list_appliances()` | every light and fan: name, kind, room and floor, on/off (and a fan's speed), online or offline |
+| `set_appliance(on?, speed?, id?, room?, kind?, name?)` | switches every appliance matching all the filters given (at least one): `room: "living", kind: "light"` is every light in the living area; `name` matches part of the name. `speed` sets a fan's speed (and turns it on); only fans with speeds are picked then. Says what was switched and what wasn't (an offline switch, a speed it doesn't have) |
 
 Only switches given an appliance on the **Devices** tab are listed; a plug with nothing assigned isn't. There's no key: the dashboard, and so `/mcp`, is only reachable on the tailnet.
 

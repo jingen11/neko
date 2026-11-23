@@ -1,6 +1,6 @@
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
-import { command, device, entity, place, snapshot, start, subscribe } from "./broker.ts";
+import { command, device, entity, place, setSpeed, snapshot, start, subscribe } from "./broker.ts";
 import { isOpening, isRoom, openings, rooms } from "./areas.ts";
 import { addAway, alarms, alarmsSince, aways, clearOverride, DAYS, type Day, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
@@ -129,17 +129,33 @@ app.patch<{ Params: { id: string }; Body: { label?: string; room?: string | null
 );
 
 /**
- * Turn a switch (a wall switch rocker, a plug) on or off: POST /api/switches/0x54ef44100196dcde/switch_top {"on": true}.
+ * Turn a switch (a wall switch rocker, a plug) or a fan on or off: POST /api/switches/0x54ef44100196dcde/switch_top {"on": true}.
+ * A fan with speeds also takes {"speed": 3} (1..its `speeds`), which turns it on at that speed.
  * The id is an entity id from /api/state with `command: true`. Answers once the command is sent; the new state
  * arrives on /api/events when the device reports it.
  */
-app.post<{ Params: { node: string; object: string }; Body: { on: boolean } }>(
+app.post<{ Params: { node: string; object: string }; Body: { on?: boolean; speed?: number } }>(
   "/api/switches/:node/:object",
-  { schema: { body: { type: "object", required: ["on"], additionalProperties: false, properties: { on: { type: "boolean" } } } } },
+  {
+    schema: {
+      body: {
+        type: "object",
+        minProperties: 1,
+        additionalProperties: false,
+        properties: { on: { type: "boolean" }, speed: { type: "integer", minimum: 1 } },
+      },
+    },
+  },
   async (req, reply) => {
     const id = `${req.params.node}/${req.params.object}`;
-    const r = await command(id, req.body.on);
-    if (r === "unknown") return reply.code(404).send({ error: `no switch "${id}" (see GET /api/state, entities with command: true)` });
+    const { on, speed } = req.body;
+    // a speed turns the fan on, so "off at speed 3" is just off
+    const r = speed !== undefined && on !== false ? await setSpeed(id, speed) : await command(id, on ?? true);
+    if (r === "unknown")
+      return reply.code(404).send({
+        error: speed !== undefined ? `no fan with speeds "${id}" (see GET /api/state, entities with speeds)` : `no switch "${id}" (see GET /api/state, entities with command: true)`,
+      });
+    if (r === "range") return reply.code(400).send({ error: `"${id}" has speeds 1 to ${entity(id)?.speeds}` });
     if (r === "offline") return reply.code(409).send({ error: "the switch or the MQTT broker is offline" });
     return reply.code(202).send(entity(id));
   },
