@@ -16,10 +16,14 @@ Everything the presence boards share lives in `presence-base.yaml`; each board f
 |---|---|
 | 3.3V | 3.3V |
 | GND | GND |
-| RX | TX (GPIO16) |
 | TX | RX (GPIO17) |
+| RX | **not connected** |
 
-The sensor streams `ON`/`OFF` and `Range <cm>` lines at 115200 baud, about 10 a second. If a board reads nothing, check the wires first: every fault so far was a broken or loose jumper wire.
+The sensor streams `ON`/`OFF` and `Range <cm>` lines at 115200 baud, about 10 a second, even with nobody there. The board only listens.
+
+**Leave the sensor's RX unconnected.** GPIO16/17 are the C6's UART0 pins, where its boot ROM prints at 115200 on every start. When the sensor powers up together with the board (a power cut, unplugging the board), that text reaches the sensor while it starts and it stays silent until it is power-cycled on its own; restarting the board doesn't bring it back. Nothing in the firmware sends to the sensor. Only `hmmd-read.yaml` does: put a wire from GPIO16 to the sensor's RX back for it, and take it out again after.
+
+If a board reads nothing, look at `<board>/sensor/uart_last/state` (below): when it stops changing, the sensor has gone silent. Then check the wires: a sensor that talks for a few seconds after reconnecting its power and then stops has a bad jumper (replace it, don't just reseat it), and every other fault so far was a broken or loose jumper wire too.
 
 ## Range cap
 
@@ -42,6 +46,7 @@ The sensor's own max-gate setting isn't used: the vendor wiki documents reading 
 | `<board>/binary_sensor/pir/state` | `ON` / `OFF`: AM312 PIR on GPIO5, on for ~2 s per motion | yes |
 | `<board>/binary_sensor/intruder/state` | `ON` / `OFF`: the PIR fired while the mmWave sees someone (or the mmWave came on within `agree_window_ms`, default 5 s, after the pulse); stays `ON` for `intruder_hold` (10 s). The home alarm counts only this on a board that has it | yes |
 | `<board>/sensor/distance/state` | cm to the detected person; median-filtered, at most once a second, only on a change of 15 cm or more; only updates while someone is within range | yes |
+| `<board>/sensor/uart_last/state` | diagnostic: the last chunk the mmWave sent, e.g. `Range 105<0D><0A>` (non-text bytes as `<hex>`), every 2 s. Stops changing when the sensor goes silent | yes |
 | `<board>/debug` | ESPHome log lines | no |
 
 ## Fan remote (`rf-remote.yaml`)
