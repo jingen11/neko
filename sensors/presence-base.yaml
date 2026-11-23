@@ -31,10 +31,28 @@ mqtt:
 # HMMD 24 GHz mmWave (S3KM1110). It streams text lines ~10x a second:
 #   "ON" / "OFF"   presence
 #   "Range <cm>"   distance to the detected person, only while ON
+# Receive only: no wire from the board to the sensor's RX. GPIO16/17 are the C6's UART0 pins, where its
+# boot ROM prints at 115200 baud on every start; a sensor powering up with the board (a power cut, unplugging)
+# takes that as input and stays silent until it is power-cycled on its own. Nothing here sends to the sensor;
+# only hmmd-read.yaml does, over a wire put back for it.
 uart:
   id: mmwave_uart
-  tx_pin: GPIO16   # board TX -> sensor RX
   rx_pin: GPIO17   # board RX <- sensor TX
+  # Keeps the last chunk received for "UART last", non-text bytes as <hex>
+  debug:
+    direction: RX
+    after:
+      delimiter: "\n"
+      timeout: 50ms        # binary frames have no newline: cut them on a pause instead
+    sequence:
+      - lambda: |-
+          std::string s;
+          char h[4];
+          for (uint8_t b : bytes) {
+            if (b >= 32 && b < 127) s += (char) b;
+            else { snprintf(h, sizeof h, "%02X", b); s += "<"; s += h; s += ">"; }
+          }
+          id(uart_last) = s.substr(0, 120);
   baud_rate: 115200
   rx_buffer_size: 512
 
@@ -112,6 +130,9 @@ binary_sensor:
     device_class: occupancy
 
 globals:
+  - id: uart_last            # the last chunk the mmWave sent, for the "UART last" diagnostic
+    type: std::string
+    restore_value: false
   - id: last_pir_ms          # millis() of the last PIR pulse; 0 = none yet
     type: uint32_t
     restore_value: false
@@ -142,3 +163,12 @@ sensor:
           send_every: 1
       - throttle_average: 1s # at most one value a second, averaged over it
       - delta: 15            # and only when it moved 15 cm or more
+
+text_sensor:
+  # What the mmWave last sent, e.g. "Range 105<0D><0A>" or "OFF<0D><0A>". It stops changing when the sensor goes
+  # silent (a loose wire, or stuck after powering up with the board). Diagnostic, so neko-home's alarm log skips it.
+  - platform: template
+    name: UART last          # -> ${name}/sensor/uart_last/state
+    entity_category: diagnostic
+    update_interval: 2s
+    lambda: return id(uart_last);
