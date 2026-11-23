@@ -1,13 +1,14 @@
-# Presence sensors
+# Presence sensors and the fan remote
 
-ESPHome configs for the presence units (ESP32-C6 + HMMD mmWave + AM312 PIR). Each unit joins the home Wi-Fi and publishes to the box's Mosquitto.
+ESPHome configs for the presence units (ESP32-C6 + HMMD mmWave + AM312 PIR) and the fan remote (ESP32-C6 + CC1101). Each board joins the home Wi-Fi and publishes to the box's Mosquitto.
 
 | Board | Config | MQTT user / topic prefix |
 |---|---|---|
 | Ground floor | `presence-gf.yaml` | `presence-gf` |
 | First floor | `presence-1f.yaml` | `presence-1f` |
+| Fan remote | `rf-remote.yaml` | `rf-remote` |
 
-Everything shared lives in `presence-base.yaml`; each board file only sets its `name` and its IP secret. Change the base and reflash every board.
+Everything the presence boards share lives in `presence-base.yaml`; each board file only sets its `name` and its IP secret. Change the base and reflash every presence board. The fan remote is its own file.
 
 ## Wiring
 
@@ -42,6 +43,43 @@ The sensor's own max-gate setting isn't used: the vendor wiki documents reading 
 | `<board>/binary_sensor/intruder/state` | `ON` / `OFF`: the PIR fired while the mmWave sees someone (or the mmWave came on within `agree_window_ms`, default 5 s, after the pulse); stays `ON` for `intruder_hold` (10 s). The home alarm counts only this on a board that has it | yes |
 | `<board>/sensor/distance/state` | cm to the detected person; median-filtered, at most once a second, only on a change of 15 cm or more; only updates while someone is within range | yes |
 | `<board>/debug` | ESPHome log lines | no |
+
+## Fan remote (`rf-remote.yaml`)
+
+A C6 with a CC1101 433 MHz radio that sends the ceiling fans' remote codes, so the fans can be switched over MQTT (and from neko-home and ねこ). It also hears the real remotes, so a fan's state follows them.
+
+| CC1101 | C6 board |
+|---|---|
+| VCC | 3.3V (not 5 V) |
+| GND | GND |
+| SCK | GPIO18 |
+| MOSI | GPIO19 |
+| MISO | GPIO20 |
+| CSN | GPIO21 |
+| GDO0 (data in when sending) | GPIO22 |
+| GDO2 (data out when listening) | GPIO14 |
+
+| Fan | Object id | Speeds |
+|---|---|---|
+| Living room | `living_room_fan` | 8 |
+| Dining room | `dining_room_fan` | 6 |
+| Master bedroom | `master_bedroom_fan` | 6 |
+| Upper living | `upper_living_fan` | 6 |
+
+| Topic | Payload |
+|---|---|
+| `rf-remote/fan/<fan>/command` | `ON` / `OFF` |
+| `rf-remote/fan/<fan>/speed_level/command` | `1`..speeds; also turns the fan on |
+| `rf-remote/fan/<fan>/state`, `.../speed_level/state` | what was last sent or heard from its remote (retained) |
+
+The radio has no reply, so the state is the board's belief: after a board restart every fan reads off until it is used, and a remote press the board misses isn't seen. Nothing is sent at boot.
+
+The codes and frame formats are in the comments at the top of `rf-remote.yaml`. Neither remote uses a rolling code. Two things that took a while to find:
+
+- Don't give the `cc1101:` component a `gdo0_pin`. Its `begin_tx` sets that pin as a plain GPIO output, which unhooks it from the transmitter and nothing goes out. GDO0 is open-drain with a pull-up instead, so the CC1101 can drive it while listening.
+- The dining, bedroom and upper living remotes send the long sync pulse only before the first frame of a press; the repeats are just the 24 bits with ~18 ms between them. A sync before every frame is ignored by the fans.
+
+To record a new remote, a sniffer config that logs every frame's timings (receive only, like `hmmd-read.yaml`, not committed) is the way: compare its frames with what `send_code` builds.
 
 ## Setup
 
