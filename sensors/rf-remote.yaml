@@ -1,0 +1,296 @@
+# 433 MHz remote for four ceiling fans: an ESP32-C6 + CC1101 that sends the fans' remote codes,
+# and hears the real remotes so the fan states here follow them.
+# Fan 1 living room · fan 2 dining room · fan 3 master bedroom · fan 4 upper living.
+# Codes were recorded with a sniffer; neither remote uses a rolling code.
+#
+# Fan 1 remote: 24 bits in ~390 us units: a 1-unit high lead-in, then each bit low-then-high
+# (1 = L + HH, 0 = LL + H), MSB first; frames every ~38 ms while held. No On button.
+#   Off 0xFF93FF · Speed n 0xFF93F6 + n (1 = F7 ... 8 = FE)
+#
+# Fan 2-4 remotes (same model, own address): sync 2.45 ms high + 3.0 ms low (first frame only), then 24 bits
+# in ~580 us units, each high-then-low (1 = HHH + L, 0 = H + LLL), MSB first, then a 1-unit closing pulse;
+# frames every ~74 ms (~18 ms low between them). The fans ignore a sync before every frame.
+#   code = address << 8 | button. Addresses: fan 2 0x3003 · fan 3 0x1777 · fan 4 0x17AC
+#   Buttons: On 09 · Off 03 · Speed 1-6: 05 02 0E 0B 07 0F
+substitutions:
+  name: rf-remote
+
+esphome:
+  name: ${name}
+  on_boot:
+    priority: -100           # after the CC1101 and the fans are set up
+    then:
+      - cc1101.begin_rx: radio
+      - lambda: id(quiet) = false;   # from here on, fan changes are sent over the air
+
+esp32:
+  variant: esp32c6
+  framework:
+    type: esp-idf
+
+logger:
+ota:
+  - platform: esphome
+    password: !secret ota_pw
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_pw
+  use_address: !secret rf_remote_ip   # fixed by DHCP reservation; OTA and logs go here
+
+mqtt:
+  broker: !secret mqtt_broker   # the box's router IP, not the Tailscale one
+  username: ${name}             # its own Mosquitto user, named after the board
+  password: !secret mqtt_pw
+  # A speed command on its own also turns the fan on (the fan component only sets the speed),
+  # even when the speed is the one it already had.
+  on_message:
+    - topic: ${name}/fan/living_room_fan/speed_level/command
+      then:
+        - lambda: |-
+            int speed = atoi(x.c_str());
+            if (speed >= 1 && !id(fan_1).state) id(fan_1).turn_on().set_speed(speed).perform();
+    - topic: ${name}/fan/dining_room_fan/speed_level/command
+      then:
+        - lambda: |-
+            int speed = atoi(x.c_str());
+            if (speed >= 1 && !id(fan_2).state) id(fan_2).turn_on().set_speed(speed).perform();
+    - topic: ${name}/fan/master_bedroom_fan/speed_level/command
+      then:
+        - lambda: |-
+            int speed = atoi(x.c_str());
+            if (speed >= 1 && !id(fan_3).state) id(fan_3).turn_on().set_speed(speed).perform();
+    - topic: ${name}/fan/upper_living_fan/speed_level/command
+      then:
+        - lambda: |-
+            int speed = atoi(x.c_str());
+            if (speed >= 1 && !id(fan_4).state) id(fan_4).turn_on().set_speed(speed).perform();
+
+# CC1101 wiring (3.3 V only):
+#   SCK GPIO18 · MOSI GPIO19 · MISO GPIO20 · CSN GPIO21 · GDO0 GPIO22 (TX data in) · GDO2 GPIO14 (RX data out)
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO19
+  miso_pin: GPIO20
+
+cc1101:
+  id: radio
+  cs_pin: GPIO21
+  frequency: 433.92MHz
+  modulation_type: ASK/OOK
+
+remote_transmitter:
+  id: rf_tx
+  # No gdo0_pin on the cc1101: its begin_tx sets the pin as a plain GPIO output, which unhooks
+  # it from the RMT and nothing gets sent. Open-drain instead: we only ever pull low, so the
+  # CC1101 can drive GDO0 in RX without a fight; the pull-up makes the high in TX.
+  pin:
+    number: GPIO22
+    mode:
+      output: true
+      open_drain: true
+      pullup: true
+  carrier_duty_percent: 100%   # no carrier: the CC1101 does the keying
+  on_transmit:
+    - cc1101.begin_tx: radio
+  on_complete:
+    - cc1101.begin_rx: radio
+
+remote_receiver:
+  pin: GPIO14
+  dump: []
+  tolerance: 50%
+  filter: 250us
+  idle: 4ms                  # shorter than both remotes' frame gaps, so each frame comes in on its own
+  buffer_size: 10kb
+  on_raw:
+    then:
+      - lambda: |-
+          int remote = 0;
+          uint32_t code = 0;
+          auto len = [](int32_t d) { return d > 0 ? d : -d; };
+
+          // Fan 2: sync (long high, long low), then 24 high-low pairs.
+          for (size_t i = 0; i + 49 < x.size() && !remote; i++) {
+            if (x[i] < 1800 || len(x[i + 1]) < 2200) continue;
+            uint32_t c = 0;
+            bool ok = true;
+            for (size_t b = 0; b < 24 && ok; b++) {
+              int32_t hi = x[i + 2 + 2 * b], lo = len(x[i + 3 + 2 * b]);
+              if (hi > 1100 && lo < 1100) c = c << 1 | 1;
+              else if (hi < 1100 && lo > 1100) c = c << 1;
+              else ok = false;
+            }
+            if (ok) { remote = 2; code = c; }
+          }
+
+          // Fan 1: ~390 us units as H/L chars, trailing gap dropped; the last 72 units are the 24 bits.
+          if (!remote) {
+            std::string u;
+            for (int32_t d : x) {
+              int n = (len(d) + 195) / 390;
+              u.append(n < 1 ? 1 : n > 2 ? 2 : n, d > 0 ? 'H' : 'L');
+            }
+            while (!u.empty() && u.back() == 'L') u.pop_back();
+            if (u.size() < 72) return;
+            for (size_t i = u.size() - 72; i < u.size(); i += 3) {
+              std::string sym = u.substr(i, 3);
+              if (sym == "LHH") code = code << 1 | 1;
+              else if (sym == "LLH") code = code << 1;
+              else return;
+            }
+            remote = 1;
+          }
+
+          static uint32_t last_code = 0, last_ms = 0;
+          uint32_t now = millis();
+          bool repeat = code == last_code && now - last_ms < 300;   // one press = many frames
+          last_code = code; last_ms = now;
+          if (repeat) return;
+
+          // speed: 0 = off, 1..n = that speed, -2 = on (fans 2-4), -1 = not a fan button
+          int speed = -1;
+          fan::Fan *f = nullptr;
+          if (remote == 1) {
+            f = id(fan_1);
+            if (code == 0xFF93FF) speed = 0;
+            else if (code >= 0xFF93F7 && code <= 0xFF93FE) speed = code - 0xFF93F6;
+          } else {
+            uint32_t addr = code >> 8, button = code & 0xFF;
+            if (addr == 0x3003) f = id(fan_2);
+            else if (addr == 0x1777) f = id(fan_3);
+            else if (addr == 0x17AC) f = id(fan_4);
+            static const uint8_t speeds[] = {0x05, 0x02, 0x0E, 0x0B, 0x07, 0x0F};
+            if (button == 0x03) speed = 0;
+            else if (button == 0x09) speed = -2;
+            for (int s = 0; s < 6; s++) if (button == speeds[s]) speed = s + 1;
+          }
+          ESP_LOGI("fan", "heard 0x%06X%s", code, f == nullptr || speed == -1 ? " (not a known fan button)" : "");
+          if (f == nullptr || speed == -1) return;
+
+          // Follow the real remote without sending anything back.
+          id(quiet) = true;
+          auto call = f->make_call();
+          call.set_state(speed != 0);
+          if (speed > 0) call.set_speed(speed);
+          call.perform();
+          id(quiet) = false;
+
+globals:
+  - id: quiet                # true: fan changes only update state, nothing goes over the air
+    type: bool
+    restore_value: false
+    initial_value: "true"    # quiet until boot finishes, so a restart doesn't switch a fan
+
+script:
+  # Sends one code: remote 1 or 2, in that remote's own frame format, repeated like a short press.
+  - id: send_code
+    mode: queued
+    parameters:
+      remote: int
+      code: int
+    then:
+      - lambda: |-
+          ESP_LOGI("fan", "sending remote %d: 0x%06X", remote, code);
+          auto call = id(rf_tx).transmit();
+          auto *data = call.get_data();
+          data->set_carrier_frequency(0);
+          if (remote == 1) {
+            data->mark(390);                                   // lead-in
+            for (int b = 23; b >= 0; b--) {
+              if (code >> b & 1) { data->space(390); data->mark(780); }
+              else               { data->space(780); data->mark(390); }
+            }
+            data->space(9500);                                 // frames every ~38 ms
+            call.set_send_times(8);
+          } else {
+            // As the real remote sends a press: the sync only once, then the 24 bits + closing pulse
+            // repeated with an ~18 ms low gap (frames every ~74 ms). Built as one transmission.
+            data->space(18000);                                // a clean low first
+            data->mark(2450); data->space(3020);               // sync, first frame only
+            for (int r = 0; r < 10; r++) {
+              for (int b = 23; b >= 0; b--) {
+                if (code >> b & 1) { data->mark(1750); data->space(590); }
+                else               { data->mark(580);  data->space(1760); }
+              }
+              data->mark(580);                                 // closing pulse
+              data->space(17700);
+            }
+            call.set_send_times(1);
+          }
+          call.set_send_wait(0);
+          call.perform();
+
+  # Sends only what changed, so an off fan given a speed doesn't get an Off first.
+  - id: fan_changed
+    mode: queued
+    parameters:
+      slot: int              # 0 = fan 1, 1-3 = fans 2-4
+      power: bool            # not "on": YAML reads that key as true
+      speed: int
+    then:
+      - lambda: |-
+          static bool was_on[4] = {false, false, false, false};
+          static int was_speed[4] = {0, 0, 0, 0};
+          bool turned_on = power && !was_on[slot], turned_off = !power && was_on[slot];
+          bool changed_speed = power && (speed != was_speed[slot] || turned_on);   // turning on always sends the speed too
+          was_on[slot] = power;
+          if (power) was_speed[slot] = speed;   // a speed set while off is sent when it turns on
+          if (id(quiet)) return;
+          if (slot == 0) {           // fan 1: no On button, a speed code turns it on
+            if (turned_off) id(send_code)->execute(1, 0xFF93FF);
+            else if ((turned_on || changed_speed) && speed >= 1 && speed <= 8) id(send_code)->execute(1, 0xFF93F6 + speed);
+            return;
+          }
+          static const int addrs[] = {0x3003, 0x1777, 0x17AC};
+          static const int speeds[] = {0x05, 0x02, 0x0E, 0x0B, 0x07, 0x0F};
+          int addr = addrs[slot - 1];
+          if (turned_off) id(send_code)->execute(2, addr << 8 | 0x03);
+          if (turned_on) id(send_code)->execute(2, addr << 8 | 0x09);
+          if (changed_speed && speed >= 1 && speed <= 6) id(send_code)->execute(2, addr << 8 | speeds[speed - 1]);
+
+fan:
+  - platform: template
+    id: fan_1
+    name: Living room fan    # -> ${name}/fan/living_room_fan/command ON|OFF, .../speed_level/command 1-8
+    speed_count: 8
+    restore_mode: ALWAYS_OFF # the board can't know a fan's real state after a restart
+    on_state:
+      - script.execute:
+          id: fan_changed
+          slot: 0
+          power: !lambda return id(fan_1).state;
+          speed: !lambda return id(fan_1).speed;
+  - platform: template
+    id: fan_2
+    name: Dining room fan    # -> ${name}/fan/dining_room_fan/command ON|OFF, .../speed_level/command 1-6
+    speed_count: 6
+    restore_mode: ALWAYS_OFF # the board can't know a fan's real state after a restart
+    on_state:
+      - script.execute:
+          id: fan_changed
+          slot: 1
+          power: !lambda return id(fan_2).state;
+          speed: !lambda return id(fan_2).speed;
+  - platform: template
+    id: fan_3
+    name: Master bedroom fan # -> ${name}/fan/master_bedroom_fan/command ON|OFF, .../speed_level/command 1-6
+    speed_count: 6
+    restore_mode: ALWAYS_OFF # the board can't know a fan's real state after a restart
+    on_state:
+      - script.execute:
+          id: fan_changed
+          slot: 2
+          power: !lambda return id(fan_3).state;
+          speed: !lambda return id(fan_3).speed;
+  - platform: template
+    id: fan_4
+    name: Upper living fan   # -> ${name}/fan/upper_living_fan/command ON|OFF, .../speed_level/command 1-6
+    speed_count: 6
+    restore_mode: ALWAYS_OFF # the board can't know a fan's real state after a restart
+    on_state:
+      - script.execute:
+          id: fan_changed
+          slot: 3
+          power: !lambda return id(fan_4).state;
+          speed: !lambda return id(fan_4).speed;

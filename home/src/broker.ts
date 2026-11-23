@@ -34,7 +34,7 @@ export interface Device {
 export interface Entity {
   id: string; // "<node>/<object>", e.g. "presence-gf/distance"
   device: string;
-  component: string; // binary_sensor, sensor, switch
+  component: string; // binary_sensor, sensor, switch, fan
   name: string;
   deviceClass: string | null;
   unit: string | null;
@@ -43,8 +43,12 @@ export interface Entity {
   at: number | null;
   /** Zigbee2MQTT marks battery, voltage, link quality and the like as `entity_category: diagnostic` */
   diagnostic: boolean;
-  /** a switch the page can turn on and off (POST /api/switches/:node/:object) */
+  /** a switch (or fan) the page can turn on and off (POST /api/switches/:node/:object) */
   command: boolean;
+  /** a fan with speeds: its speed, 1..speeds, as the fan last reported it; null for anything else or until it reports */
+  speed: number | null;
+  /** how many speeds a fan has (discovery's speed_range_max); null when it has none */
+  speeds: number | null;
 }
 
 export type Update =
@@ -62,6 +66,9 @@ interface Binding {
   payloadOff: string;
   /** a switch's command topic; it takes payloadOn / payloadOff */
   commandTopic: string | null;
+  /** a fan's speed topics: the state is the speed level (1..speeds), and the command takes one */
+  speedStateTopic: string | null;
+  speedCommandTopic: string | null;
 }
 
 // Discovery messages may use abbreviated keys (ESPHome does).
@@ -85,6 +92,10 @@ const ABBR: Record<string, string> = {
   t: "topic",
   ent_cat: "entity_category",
   avty_mode: "availability_mode",
+  pct_stat_t: "percentage_state_topic",
+  pct_cmd_t: "percentage_command_topic",
+  spd_rng_max: "speed_range_max",
+  spd_rng_min: "speed_range_min",
 };
 
 type Json = Record<string, unknown>;
@@ -110,6 +121,7 @@ const str = (v: unknown) => (typeof v === "string" && v ? v : null);
 const devices = new Map<string, Device>();
 const entities = new Map<string, Entity>();
 const byStateTopic = new Map<string, Binding[]>();
+const bySpeedTopic = new Map<string, Binding[]>();
 const bindingOf = new Map<string, Binding>();
 interface AvailTopic {
   devices: Set<string>;
@@ -166,8 +178,9 @@ function onDiscovery(topic: string, payload: string) {
   const parts = topic.slice(config.discoveryPrefix.length + 1).split("/");
   if (parts.at(-1) !== "config" || parts.length < 3) return;
   const component = parts[0];
-  // sensors, plus switches (a wall switch's rockers, a plug's relay) so the page can show and turn on lights and fans
-  if (!["sensor", "binary_sensor", "switch"].includes(component)) return;
+  // sensors, plus switches (a wall switch's rockers, a plug's relay) so the page can show and turn on lights and fans,
+  // and fans themselves (an ESPHome fan, e.g. sensors/rf-remote: a board sending a fan remote's codes), which add a speed
+  if (!["sensor", "binary_sensor", "switch", "fan"].includes(component)) return;
   const node = parts.length >= 4 ? parts[1] : null;
   const object = parts.at(-2)!;
   if (!payload) return; // an empty config removes the entity; keep it simple and leave it until restart
@@ -196,10 +209,11 @@ function onDiscovery(topic: string, payload: string) {
     deviceClass: str(c.device_class),
     unit: str(c.unit_of_measurement),
     diagnostic: c.entity_category === "diagnostic",
-    command: component === "switch" && !!str(c.command_topic),
+    command: (component === "switch" || component === "fan") && !!str(c.command_topic),
+    speeds: component === "fan" && str(c.percentage_command_topic) && typeof c.speed_range_max === "number" ? c.speed_range_max : null,
   };
   const existing = entities.get(id);
-  const entity: Entity = existing ? Object.assign(existing, meta) : { id, device: device.id, ...meta, value: null, at: null };
+  const entity: Entity = existing ? Object.assign(existing, meta) : { id, device: device.id, ...meta, value: null, at: null, speed: null };
   entities.set(id, entity);
   // A Zigbee2MQTT rename republishes the same entities (same node: the IEEE address) under a new device name:
   // move them to the new device and forget the old one once nothing is left on it.
@@ -224,13 +238,22 @@ function onDiscovery(topic: string, payload: string) {
     // Zigbee2MQTT sends booleans here (a contact sensor: payload_on false, since contact true means closed)
     payloadOn: c.payload_on !== undefined && c.payload_on !== null ? String(c.payload_on) : "ON",
     payloadOff: c.payload_off !== undefined && c.payload_off !== null ? String(c.payload_off) : "OFF",
-    commandTopic: component === "switch" ? str(c.command_topic) : null,
+    commandTopic: component === "switch" || component === "fan" ? str(c.command_topic) : null,
+    speedStateTopic: meta.speeds ? str(c.percentage_state_topic) : null,
+    speedCommandTopic: meta.speeds ? str(c.percentage_command_topic) : null,
   };
   bindingOf.set(id, binding);
   const list = (byStateTopic.get(stateTopic) ?? []).filter((b) => b.entity.id !== id);
   list.push(binding);
   if (!byStateTopic.has(stateTopic)) client?.subscribe(stateTopic);
   byStateTopic.set(stateTopic, list);
+  if (binding.speedStateTopic) {
+    const t = binding.speedStateTopic;
+    const speedList = (bySpeedTopic.get(t) ?? []).filter((b) => b.entity.id !== id);
+    speedList.push(binding);
+    if (!bySpeedTopic.has(t)) client?.subscribe(t);
+    bySpeedTopic.set(t, speedList);
+  }
 
   const avail = str(c.availability_topic)
     ? [{ topic: c.availability_topic, payload_available: c.payload_available, payload_not_available: c.payload_not_available }]
@@ -304,6 +327,19 @@ export async function command(id: string, on: boolean): Promise<"ok" | "unknown"
   return "ok";
 }
 
+/**
+ * Set a fan's speed (1..speeds) by publishing to its speed command topic. Like command(), the page only changes
+ * once the fan reports the new speed. ESPHome's fan only sets the speed; sensors/rf-remote turns the fan on with it.
+ */
+export async function setSpeed(id: string, speed: number): Promise<"ok" | "unknown" | "offline" | "range"> {
+  const b = bindingOf.get(id);
+  if (!b?.speedCommandTopic || !b.entity.speeds) return "unknown";
+  if (!Number.isInteger(speed) || speed < 1 || speed > b.entity.speeds) return "range";
+  if (!client || !connected || devices.get(b.entity.device)?.available === false) return "offline";
+  await client.publishAsync(b.speedCommandTopic, String(speed));
+  return "ok";
+}
+
 function dropIfEmpty(id: string) {
   for (const e of entities.values()) if (e.device === id) return;
   if (!devices.delete(id)) return;
@@ -319,7 +355,7 @@ function parse(b: Binding, text: string): number | string | boolean | null {
     if (raw === undefined) return null; // this message is about other fields
     if (raw !== null && typeof raw === "object") return null; // the template points at a whole object, not a value
   }
-  if (b.entity.component === "binary_sensor" || b.entity.component === "switch") {
+  if (b.entity.component === "binary_sensor" || b.entity.component === "switch" || b.entity.component === "fan") {
     const s = String(raw);
     if (s === b.payloadOn) return true;
     if (s === b.payloadOff) return false;
@@ -367,6 +403,15 @@ function onState(topic: string, text: string, retained: boolean) {
     e.value = value;
     emit({ type: "entity", entity: e });
     if (value === true && !retained && e.component === "switch") rereadVoltage(e.device);
+  }
+  for (const b of bySpeedTopic.get(topic) ?? []) {
+    const n = Number(text);
+    const e = b.entity;
+    if (!Number.isInteger(n) || n < 1 || e.speed === n) continue;
+    e.speed = n;
+    // the speed changing is the fan changing: same "when" as its on/off
+    e.at = retained ? e.at : Date.now();
+    emit({ type: "entity", entity: e });
   }
   const a = byAvailTopic.get(topic);
   if (a) {
@@ -423,7 +468,7 @@ export function start(log: { info: (m: string) => void; warn: (m: string) => voi
     connected = true;
     emit({ type: "broker", connected });
     log.info(`mqtt connected to ${config.mqttUrl}`);
-    client!.subscribe([`${config.discoveryPrefix}/#`, "esphome/discover/#", ...byStateTopic.keys(), ...byAvailTopic.keys()]);
+    client!.subscribe([`${config.discoveryPrefix}/#`, "esphome/discover/#", ...byStateTopic.keys(), ...bySpeedTopic.keys(), ...byAvailTopic.keys()]);
   });
   client.on("close", () => {
     if (!connected) return;
