@@ -1160,8 +1160,28 @@ async function saveDevice(d){
   edit.busy=false;render();
 }
 function bindDevices(){
+  const q=panel.querySelector('#dev-q');
+  if(q){
+    q.oninput=()=>{devView.q=q.value;render();};
+    q.onkeydown=e=>{if(e.key==='Escape'&&q.value){e.preventDefault();q.value='';devView.q='';render();}};
+  }
+  panel.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{
+    devView.tab=b.dataset.tab; devView.open=null;
+    try{localStorage.setItem('devices-tab',devView.tab);}catch{}
+    render();
+  });
+  panel.querySelectorAll('.dev-row').forEach(b=>b.onclick=()=>{
+    const id=b.dataset.dev, open=b.getAttribute('aria-expanded')==='true';
+    if(open&&edit.busy)return; // a save is on its way
+    devView.open=open?null:id;
+    if(open&&edit.id===id)edit.id=null;
+    // a search down to one device keeps it open: closing it clears the search instead of leaving an empty page
+    if(open&&devWords().length&&panel.querySelectorAll('.dev-row').length===1){devView.q='';}
+    render();
+  });
   panel.querySelectorAll('[data-act="edit"]').forEach(b=>b.onclick=()=>{
     const d=live.devices.get(b.dataset.dev); if(!d)return;
+    devView.open=d.id;
     Object.assign(edit,{id:d.id,label:d.label,place:placeOf(d),loads:loadsOf(d),busy:false,error:null}); render();
     requestAnimationFrame(()=>panel.querySelector('#ed-label')?.focus());
   });
@@ -1181,16 +1201,98 @@ function bindDevices(){
   form.querySelectorAll('[data-load-room]').forEach(i=>i.addEventListener('change',e=>{const k=e.target.dataset.loadRoom;edit.loads[k]={...edit.loads[k],room:e.target.value};}));
   form.onsubmit=e=>{e.preventDefault(); if(d&&!edit.busy)saveDevice(d);};
 }
+/* ---------- the Devices tab: two sections (sensors · switches and remotes), each grouped by room, with a search ----------
+   A row per device with its reading; a row opens to the device's details and edit form. */
+const DEV_TABS={sensors:'Sensors',controls:'Switches & remotes'};
+const devView={tab:'sensors',q:'',open:null};
+try{const t=localStorage.getItem('devices-tab');if(DEV_TABS[t])devView.tab=t;}catch{}
+// a switch or remote: something the page can turn on and off (a wall switch's rockers, a plug's relay, a fan remote),
+// or a Zigbee remote that reports button presses as an `action`
+const isControl=d=>entitiesOf(d.id).some(e=>e.command||(e.component==='sensor'&&objOf(e)==='action'));
+const isPlaced=d=>!!(ROOM_BY_ID[d.room]||OPEN_BY_ID[d.opening]);
+/** the room a device is listed under: its own, or for a door or window sensor the room of its door or window */
+const roomOfDevice=d=>ROOM_BY_ID[d.room]||ROOM_BY_ID[OPEN_BY_ID[d.opening]?.room]||null;
+const devWords=()=>devView.q.toLowerCase().split(/\s+/).filter(Boolean);
+function devMatches(d,words){
+  if(!words.length)return true;
+  const r=roomOfDevice(d),op=OPEN_BY_ID[d.opening];
+  const text=[d.label,d.id,d.model,r?.name,r&&LVNAME[r.lv],op?.name,...switchesOf(d.id).filter(loadOf).map(loadName)]
+    .filter(Boolean).join(' ').toLowerCase();
+  return words.every(w=>text.includes(w));
+}
+function devIcon(d){
+  const op=OPEN_BY_ID[d.opening]; if(op)return openingIcon(op,openingState(op).st);
+  const es=entitiesOf(d.id);
+  if(es.some(e=>e.component==='fan'))return IMG('fan');
+  const n=switchesOf(d.id).length; if(n)return IMG(n>1?'lighting':'power');
+  if(occupancyOf(d.id))return IMG('motion');
+  if(es.some(e=>e.deviceClass==='temperature'))return IMG('temperature');
+  return IMG('devices');
+}
+/** where it is, for its row: the door or window it's on, else its model */
+const devWhere=d=>OPEN_BY_ID[d.opening]?.name||d.model||'';
+/** its reading, for its row: open/closed, occupied, how many switches are on, or its first reading */
+function devReading(d){
+  if(d.available===false)return {text:'Offline'};
+  const c=contactOf(d.id)||occupancyOf(d.id);
+  if(c)return {text:`${formatValue(c)}${c.at?`, ${ago(c.at)}`:''}`,hot:c.value===true};
+  const ss=switchesOf(d.id);
+  if(ss.length){
+    const on=ss.filter(e=>e.value===true).length, names=ss.filter(loadOf).map(loadName);
+    const state=ss.length===1?(ss[0].value===null?'—':on?'On':'Off'):`${on} of ${ss.length} on`;
+    // repeated names read as one with a count: "Light ×3", not "Light, Light, Light"
+    const counts=new Map(); names.forEach(n=>counts.set(n,(counts.get(n)||0)+1));
+    const list=[...counts].map(([n,k])=>k>1?`${n} ×${k}`:n).join(', ');
+    return {text:list?`${state} · ${list}`:state,hot:on>0};
+  }
+  const e=entitiesOf(d.id).find(e=>!e.diagnostic&&e.value!==null);
+  return {text:e?`${e.name} ${formatValue(e)}`:'No reading yet'};
+}
+function devRowHtml(d,open){
+  const r=devReading(d), st=d.available===false?'down':d.available?'up':'';
+  return `<li class="dev-item${open?' open':''}">
+    <button class="dev-row" data-dev="${esc(d.id)}" aria-expanded="${open}">
+      <span class="ico sm ${d.available===false?'off':r.hot?'on':''}">${devIcon(d)}</span>
+      <span class="dev-row-text"><b title="${esc(d.label)}">${esc(d.label)}</b>
+        <small>${[`<span class="${r.hot?'hot':''}">${esc(r.text)}</span>`,devWhere(d)&&esc(devWhere(d))].filter(Boolean).join(' · ')}</small></span>
+      <span class="pip ${st}" title="${st==='down'?'Offline':st==='up'?'Online':'Online state unknown'}"></span><span class="chev" aria-hidden="true"></span>
+    </button>
+    ${open?`<div class="dev-detail">${devDetailHtml(d)}</div>`:''}</li>`;
+}
 function devicesHtml(){
-  // new, unplaced devices first, so a freshly paired one is easy to find
-  const isPlaced=d=>!!(ROOM_BY_ID[d.room]||OPEN_BY_ID[d.opening]);
-  const devs=[...live.devices.values()].sort((a,b)=>isPlaced(a)-isPlaced(b)||a.label.localeCompare(b.label));
   if(edit.id&&!live.devices.has(edit.id)&&!edit.busy)edit.id=null; // renamed in Zigbee2MQTT, or gone
-  return `${headHtml('Devices','Found through MQTT discovery')}
-    ${devs.length?devs.map(d=>{const room=ROOM_BY_ID[d.room],op=OPEN_BY_ID[d.opening],editing=edit.id===d.id;return `<article class="panel-card">
-      <div class="card-head"><span class="ico ${d.available===false?'off':''}">${(op?openingIcon(op,openingState(op).st):IMG(occupancyOf(d.id)?'motion':'devices'))}</span>
-        <div class="dev-title"><strong class="name" title="${esc(d.label)}">${esc(d.label)}</strong><span class="label" title="${esc(d.id)}">${esc(d.id)}</span></div>
-        <span class="status ${d.available===false?'down':d.available?'up':''}">${d.available===false?'Offline':d.available?'Online':'Unknown'}</span></div>
+  if(devView.open&&!live.devices.has(devView.open))devView.open=null;
+  const words=devWords(), all=[...live.devices.values()];
+  const lists=Object.fromEntries(Object.keys(DEV_TABS).map(t=>[t,all.filter(d=>isControl(d)===(t==='controls')&&devMatches(d,words))]));
+  const list=lists[devView.tab], other=devView.tab==='sensors'?'controls':'sensors';
+  // a search down to one device opens it
+  const openId=edit.id||(words.length&&list.length===1?list[0].id:devView.open);
+  const byLabel=(a,b)=>a.label.localeCompare(b.label);
+  // devices placed nowhere come first, so a freshly paired one is easy to find; then the rooms in house order
+  const groups=[{r:null,ds:list.filter(d=>!roomOfDevice(d))},...ROOMS.map(r=>({r,ds:list.filter(d=>roomOfDevice(d)===r)}))]
+    .filter(g=>g.ds.length);
+  const groupHtml=({r,ds})=>`<section class="dev-group${r?'':' lost'}" aria-label="${esc(r?r.name:'Not placed')}">
+    <header class="grp-head"><span class="ico sm">${r?roomIcon(r):IMG('other')}</span>
+      <div><b>${esc(r?r.name:'Not placed')}</b><span>${r?`${LVNAME[r.lv]} · `:'Give each a room, door or window · '}${ds.length} ${ds.length===1?'device':'devices'}</span></div>
+      ${statusHtml(ds)}</header>
+    <ul class="dev-list">${ds.sort(byLabel).map(d=>devRowHtml(d,d.id===openId)).join('')}</ul></section>`;
+  const tabs=`<div class="tabs" role="group" aria-label="Kind of device">${Object.entries(DEV_TABS).map(([t,name])=>
+    `<button data-tab="${t}" aria-pressed="${t===devView.tab}">${name}<span class="count">${lists[t].length}</span></button>`).join('')}</div>`;
+  let body;
+  if(!all.length)body=`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`;
+  else if(!list.length)body=`<p class="empty">${words.length?`Nothing in ${DEV_TABS[devView.tab]} matches “${esc(devView.q.trim())}”.`:`No ${DEV_TABS[devView.tab].toLowerCase()} yet.`}
+    ${lists[other].length&&words.length?` <button class="btn ghost inline" data-tab="${other}">${lists[other].length} in ${DEV_TABS[other]}</button>`:''}</p>`;
+  else body=groups.map(groupHtml).join('');
+  return `${headHtml('Devices',`${all.length} found through MQTT discovery`)}
+    <div class="dev-tools">
+      <input class="field" type="search" id="dev-q" value="${esc(devView.q)}" placeholder="Search by name, room, door or window" aria-label="Search devices" autocomplete="off" spellcheck="false">
+      ${tabs}</div>
+    ${body}`;
+}
+/** what a device row opens to: its Zigbee/ESPHome name, the edit form, every reading and switch, and the edit button */
+function devDetailHtml(d){
+  const room=ROOM_BY_ID[d.room],op=OPEN_BY_ID[d.opening],editing=edit.id===d.id;
+  return `<span class="label dev-id" title="${esc(d.id)}">${esc(d.id)}</span>
       ${editing?editHtml(d):''}
       <dl class="facts">
         <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed yet'}</dd>
@@ -1202,7 +1304,7 @@ function devicesHtml(){
         <dt>Board</dt><dd>${esc([d.model,d.firmware&&'ESPHome '+d.firmware].filter(Boolean).join(' · ')||'—')}</dd>
         <dt>${d.available===false?'Offline':'Online'} since</dt><dd>${d.availableAt?`${clockTime(d.availableAt)}, ${ago(d.availableAt)}`:'—'}</dd>
       </dl>
-      ${editing?'':`<div class="actions"><button class="btn ${isPlaced(d)?'':'primary'}" data-act="edit" data-dev="${esc(d.id)}" aria-label="${isPlaced(d)?'Edit':'Place'} ${esc(d.label)}">${isPlaced(d)?(switchesOf(d.id).length?'Edit label, place or appliances':'Edit label or place'):'Place this device'}</button></div>`}</article>`;}).join(''):`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`}`;
+      ${editing?'':`<div class="actions"><button class="btn ${isPlaced(d)?'':'primary'}" data-act="edit" data-dev="${esc(d.id)}" aria-label="${isPlaced(d)?'Edit':'Place'} ${esc(d.label)}">${isPlaced(d)?(switchesOf(d.id).length?'Edit label, place or appliances':'Edit label or place'):'Place this device'}</button></div>`}`;
 }
 /* ---------- alarm page ---------- */
 // status comes live over SSE; the schedule and the alarms are fetched (on opening the page, after each change, and as alarms come in)
@@ -1468,7 +1570,9 @@ function bindAlarm(){
 }
 function renderPanel(){
   // keep keyboard focus across live re-renders
-  const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room||f.dataset?.sw):null;
+  const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room||f.dataset?.sw||f.dataset?.tab||(f.classList.contains('dev-row')?f.dataset.dev:null)):null;
+  // the device search: typing redraws the list under it, so put the caret back where it was
+  const caret=f&&f.id==='dev-q'&&panel.contains(f)?[f.selectionStart,f.selectionEnd]:null;
   if(page==='alarm'||page==='settings'){
     // a form being filled in survives live updates; the page redraws only when its content changes
     const typing=f&&panel.contains(f)&&f.matches('input');
@@ -1483,14 +1587,15 @@ function renderPanel(){
   }
   panel._html=null;
   // the device form: don't redraw under the caret or an open dropdown (its values are kept in `edit`)
-  if(page==='devices'&&edit.id&&!edit.busy&&f&&panel.contains(f)&&f.matches('input,select'))return;
+  if(page==='devices'&&edit.id&&!edit.busy&&f&&panel.contains(f)&&f.closest('.dev-edit')&&f.matches('input,select'))return;
   const top=panel.scrollTop;
   panel.innerHTML=page==='devices'?devicesHtml():overviewHtml();
   panel.scrollTop=top;
   if(page==='devices')bindDevices();
   panel.querySelectorAll('.row').forEach(b=>b.onclick=()=>{const r=ROOM_BY_ID[b.dataset.id];select(r===sel?null:r);});
   panel.querySelectorAll('.mini[data-room]').forEach(b=>b.onclick=()=>select(ROOM_BY_ID[b.dataset.room]));
-  if(fid)panel.querySelector(`[data-id="${CSS.escape(fid)}"],[data-room="${CSS.escape(fid)}"],[data-sw="${CSS.escape(fid)}"]`)?.focus();
+  if(caret){const i=panel.querySelector('#dev-q');if(i){i.focus();i.setSelectionRange(...caret);}}
+  else if(fid)panel.querySelector(`[data-id="${CSS.escape(fid)}"],[data-room="${CSS.escape(fid)}"],[data-sw="${CSS.escape(fid)}"],.tabs [data-tab="${CSS.escape(fid)}"],.dev-row[data-dev="${CSS.escape(fid)}"]`)?.focus();
 }
 
 /* ---------- the selected room card ---------- */
