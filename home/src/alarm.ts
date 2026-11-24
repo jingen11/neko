@@ -18,7 +18,9 @@ import { keepSounding, silence } from "./siren.ts";
  * (e.g. disarm at 23:30 inside a 23:00-07:00 period -> stays disarmed until 07:00, then follows the schedule).
  *
  * Each armed stretch is a session; while one is open, every live sensor change and every board going
- * online/offline is written to alarm_events. Each alarm among them sends a notification, and the first one that isn't a low battery or tamper starts the siren, which sounds until disarmed. Retained values replayed on (re)connect are skipped:
+ * online/offline is written to alarm_events. Each alarm among them sends a notification, and one that isn't a low battery or tamper starts the siren.
+ * The siren sounds until it is cleared (clearSiren: it stops, the alarm stays armed, and the next alarm sounds it again)
+ * or the alarm is disarmed. Retained values replayed on (re)connect are skipped:
  * they are old readings, not something that happened while armed.
  */
 
@@ -80,6 +82,11 @@ if (!(db.prepare("PRAGMA table_info(alarm_events)").all() as { name: string }[])
   db.exec("ALTER TABLE alarm_events ADD COLUMN siren INTEGER NOT NULL DEFAULT 0");
 }
 
+// when the siren was last cleared in an armed stretch: only alarms after it keep it sounding
+if (!(db.prepare("PRAGMA table_info(alarm_sessions)").all() as { name: string }[]).some((c) => c.name === "siren_cleared_at")) {
+  db.exec("ALTER TABLE alarm_sessions ADD COLUMN siren_cleared_at INTEGER");
+}
+
 // ---- types ----
 
 /** days of the week, in the order of Date.getDay() */
@@ -104,6 +111,8 @@ export interface AlarmSession {
   armedAt: number;
   disarmedAt: number | null;
   reason: Reason;
+  /** when the siren was last cleared in this stretch, or null */
+  sirenClearedAt: number | null;
 }
 export interface AlarmEvent {
   id: number;
@@ -131,6 +140,8 @@ export interface AlarmStatus {
   /** a manual arm/disarm in force, or null when following the schedule */
   override: { armed: boolean; at: number } | null;
   session: AlarmSession | null;
+  /** the siren is sounding: an alarm since it was armed (or since the siren was last cleared) */
+  ringing: boolean;
 }
 
 type Row = Record<string, string | number | null>;
@@ -140,6 +151,7 @@ const toSession = (r: Row): AlarmSession => ({
   armedAt: Number(r.armed_at),
   disarmedAt: r.disarmed_at === null ? null : Number(r.disarmed_at),
   reason: r.reason as Reason,
+  sirenClearedAt: r.siren_cleared_at == null ? null : Number(r.siren_cleared_at),
 });
 const toEvent = (r: Row): AlarmEvent => ({
   id: Number(r.id),
@@ -239,7 +251,8 @@ const qAlarmsSince = db.prepare(`SELECT COUNT(*) AS n FROM alarm_events WHERE ${
 const qInsert = db.prepare(
   "INSERT INTO alarm_events (session_id, at, kind, device, entity, name, room, opening, value, unit, alarm, siren) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 );
-const qRinging = db.prepare("SELECT 1 FROM alarm_events WHERE session_id = ? AND siren = 1 LIMIT 1");
+const qRinging = db.prepare("SELECT 1 FROM alarm_events WHERE session_id = ? AND siren = 1 AND at > ? LIMIT 1");
+const qClearSiren = db.prepare("UPDATE alarm_sessions SET siren_cleared_at = ? WHERE id = ?");
 
 let current: AlarmSession | null = (() => {
   const r = qOpen.get() as Row | undefined;
@@ -267,14 +280,14 @@ function evaluate(): AlarmStatus {
   if (armed && !current) {
     const at = Date.now();
     const { lastInsertRowid } = qArm.run(at, reason);
-    current = { id: Number(lastInsertRowid), armedAt: at, disarmedAt: null, reason: reason! };
+    current = { id: Number(lastInsertRowid), armedAt: at, disarmedAt: null, reason: reason!, sirenClearedAt: null };
   } else if (!armed && current) {
     qDisarm.run(Date.now());
     current = null;
     silence();
   }
 
-  const s: AlarmStatus = { armed, reason, scheduled, override: o && { armed: o.armed, at: o.at }, session: current };
+  const s: AlarmStatus = { armed, reason, scheduled, override: o && { armed: o.armed, at: o.at }, session: current, ringing: ringing() };
   const key = JSON.stringify(s);
   if (key !== JSON.stringify(last)) {
     last = s;
@@ -295,6 +308,16 @@ export function setArmed(armed: boolean): AlarmStatus {
   const scheduled = scheduledNow();
   if (armed === (scheduled !== "off")) qClearOverride.run(); // matches the schedule: nothing to override
   else qSetOverride.run(armed ? 1 : 0, scheduled, Date.now());
+  return evaluate();
+}
+
+/** Stop the siren and stay armed. The next alarm sounds it again. */
+export function clearSiren(): AlarmStatus {
+  if (current) {
+    current.sirenClearedAt = Date.now();
+    qClearSiren.run(current.sirenClearedAt, current.id);
+  }
+  silence();
   return evaluate();
 }
 
@@ -357,7 +380,10 @@ function record(u: Update) {
     const siren = alarm && soundsSiren(e);
     qInsert.run(current.id, e.at, "entity", e.device, e.id, e.name, place?.room ?? null, place?.opening ?? null, JSON.stringify(e.value), e.unit, alarm ? 1 : 0, siren ? 1 : 0);
     if (alarm) {
-      if (siren) keepSounding();
+      if (siren) {
+        keepSounding();
+        evaluate(); // ringing may have just started
+      }
       notifyAlarm({ kind: "entity", device: e.device, label: place?.label ?? e.device, deviceClass: e.deviceClass, name: e.name, opening: place?.opening ?? null, at: e.at });
     }
   } else if (u.type === "device") {
@@ -369,14 +395,21 @@ function record(u: Update) {
     qInsert.run(current.id, d.availableAt, "availability", d.id, null, null, d.room, d.opening, JSON.stringify(d.available), null, d.available ? 0 : 1, d.available ? 0 : 1);
     if (!d.available) {
       keepSounding();
+      evaluate();
       notifyAlarm({ kind: "availability", device: d.id, label: d.label, deviceClass: null, name: null, opening: d.opening, at: d.availableAt });
     }
   }
 }
 
-/** The siren rings from the first alarm of an armed stretch until it is disarmed. Read from the log, so a restart mid-alarm carries on. */
+/**
+ * The siren rings from an alarm until it is cleared or the alarm disarmed: any siren alarm in this armed stretch
+ * since the last clear. Read from the log, so a restart mid-alarm carries on.
+ */
+function ringing() {
+  return !!current && !!qRinging.get(current.id, current.sirenClearedAt ?? 0);
+}
 function ring() {
-  if (current && qRinging.get(current.id)) keepSounding();
+  if (ringing()) keepSounding();
 }
 
 subscribe(record);

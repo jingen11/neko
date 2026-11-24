@@ -764,7 +764,7 @@ const sensorRooms=()=>ROOMS.filter(r=>devicesIn(r).length);
 const KIND={light:{name:'Light',icon:'light'},fan:{name:'Fan',icon:'ceiling-fan'}};
 const objOf=e=>e.id.split('/').pop();
 const switchesOf=id=>entitiesOf(id).filter(e=>e.command);
-/** a siren's on/off switch is a reading here, "Sounding" or "Quiet": it follows the alarm, and only disarming stops it */
+/** a siren's on/off switch is a reading here, "Sounding" or "Quiet": it follows the alarm, and Clear siren (Alarm tab) or disarming stops it */
 const asReading=e=>objOf(e)==='switch_siren_on'?{...e,command:false,name:'Siren',deviceClass:'siren'}:e;
 const loadOf=e=>live.devices.get(e.device)?.loads?.[objOf(e)]||null;
 // "Top", "Center", "Bottom" for an Aqara rocker; a plug's only relay has no name of its own
@@ -1480,13 +1480,14 @@ function alarmHtml(){
   return `${headHtml('Alarm','What happened while armed')}
     <article class="panel-card">
       <div class="card-head ${s.armed?'on':'off'}"><span class="ico ${s.armed?'on':''}">${IMG(s.armed?'alarm':'security')}</span>
-        <div><span class="label">Right now</span><strong class="big">${s.armed?'Armed':'Disarmed'}</strong><p class="note">${esc(alarmNote(s))}</p></div></div>
+        <div><span class="label">Right now</span><strong class="big">${s.armed?(s.ringing?'Siren sounding':'Armed'):'Disarmed'}</strong><p class="note">${esc(s.ringing?'Clear the siren to stop it and stay armed. The next alarm sounds it again.':alarmNote(s))}</p></div></div>
       <div class="stats">
         <div class="stat"><span class="label">Today</span><strong>${alarm.today??'—'}</strong></div>
         <div class="stat"><span class="label">Last alarm</span><strong>${last?ago(last.at).replace(' ago',''):'—'}</strong></div>
         <div class="stat"><span class="label">Armed for</span><strong>${sess?ago(sess.armedAt).replace(' ago','').replace('just now','now'):'—'}</strong></div>
       </div>
       <div class="actions">
+        ${s.ringing?`<button class="btn primary" data-act="clear-siren"${dis}>Clear siren</button>`:''}
         <button class="btn ${s.armed?'':'primary'}" data-act="${s.armed?'disarm':'arm'}"${dis}>${s.armed?'Disarm now':'Arm now'}</button>
         ${s.override?`<button class="btn ghost" data-act="follow"${dis}>Follow the schedule</button>`:''}
         <button class="btn ghost" data-act="go-settings">Schedule</button>
@@ -1545,6 +1546,7 @@ function bindAlarm(){
   panel.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
     const a=b.dataset.act;
     if(a==='arm'||a==='disarm')alarmDo(()=>api('',{method:'POST',body:JSON.stringify({armed:a==='arm'})}));
+    else if(a==='clear-siren')alarmDo(()=>api('/siren',{method:'DELETE'}));
     else if(a==='follow')alarmDo(()=>api('/override',{method:'DELETE'}));
     else if(a==='del-period'){const list=alarm.periods.filter((_,i)=>i!==+b.dataset.i).map(({start,end,days})=>({start,end,days}));
       alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));}

@@ -2,7 +2,7 @@ import { command, snapshot } from "./broker.ts";
 
 /**
  * The siren(s). Once anything counts as an alarm while armed (someone detected, a door or window opened,
- * a vibration, a board going offline), the siren sounds until the alarm is disarmed.
+ * a vibration, a board going offline), the siren sounds until it is cleared or the alarm is disarmed.
  *
  * A siren only sounds for its own alarm_duration (the SONOFF SNZB-09P tops out at 900 s), so while the
  * alarm module says it's ringing it calls keepSounding() every few seconds, and the siren is sent "on" again
@@ -55,7 +55,7 @@ export function keepSounding() {
   send(true);
 }
 
-/** On disarming: stop the siren. */
+/** On clearing the siren or disarming: stop it. */
 export function silence() {
   const sounding = lastSent > 0 || sirens().some((s) => s.value === true);
   lastSent = 0;
