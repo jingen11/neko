@@ -81,6 +81,8 @@ On a presence board with an `Intruder` sensor (PIR and mmWave agreeing, see `sen
 
 Each alarm is also sent as a push notification when `NTFY_URL` is set (e.g. `http://127.0.0.1:2586/home`, the ntfy server on the box at https://ntfy.home.je-dev.com; Caddy block in `deploy/caddy/ntfy.caddy`). Only while armed, and only alarms: someone detected, a door or window opening, a vibration, a diagnostic warning turning on, or a board going offline. One notification per device and kind a minute, so a presence sensor flickering doesn't spam; tapping it opens the dashboard.
 
+The first alarm of an armed stretch also starts the siren, and it sounds until the alarm is disarmed. A low battery, a tamper switch or another diagnostic warning only sends a notification. A siren is any Zigbee2MQTT device with a `siren_on` switch (the SONOFF SNZB-09P, `Alarm`), and it sounds whether or not `NTFY_URL` is set. The siren stops by itself after its `alarm_duration`, so while the alarm is ringing the app sends "on" again every 4 minutes, or within 15 s if the siren reports it has stopped. This carries on across an app restart. Keep `alarm_duration` at its maximum, 900 s, in Zigbee2MQTT: that keeps the 4-minute resend well inside it, and if the app dies mid-alarm the siren still stops within 15 minutes. Volume and tone are the siren's own settings (`alarm_volume_level`, `alarm_sound_type`).
+
 ```bash
 curl -X PUT  localhost:8090/api/alarm/periods -H 'content-type: application/json' -d '[{"start":"23:00","end":"07:00","days":["mon","tue","wed","thu","fri"]},{"start":"01:00","end":"09:00","days":["sat","sun"]}]'
 curl -X POST localhost:8090/api/alarm/away    -H 'content-type: application/json' -d '{"from":"2026-12-20","to":"2026-12-27","note":"trip"}'
