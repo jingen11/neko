@@ -764,6 +764,8 @@ const sensorRooms=()=>ROOMS.filter(r=>devicesIn(r).length);
 const KIND={light:{name:'Light',icon:'light'},fan:{name:'Fan',icon:'ceiling-fan'}};
 const objOf=e=>e.id.split('/').pop();
 const switchesOf=id=>entitiesOf(id).filter(e=>e.command);
+/** a siren's on/off switch is a reading here, "Sounding" or "Quiet": it follows the alarm, and only disarming stops it */
+const asReading=e=>objOf(e)==='switch_siren_on'?{...e,command:false,name:'Siren',deviceClass:'siren'}:e;
 const loadOf=e=>live.devices.get(e.device)?.loads?.[objOf(e)]||null;
 // "Top", "Center", "Bottom" for an Aqara rocker; a plug's only relay has no name of its own
 const switchName=e=>e.name&&e.name!=='switch'?e.name:'Relay';
@@ -855,7 +857,7 @@ const clockTime=t=>new Date(t).toLocaleTimeString(undefined,{hour:'2-digit',minu
 function formatValue(e){
   if(e.value===null||e.value===undefined)return '—';
   if(typeof e.value==='boolean'){
-    const pair={occupancy:['Occupied','Clear'],presence:['Present','Clear'],motion:['Motion','Still'],door:['Open','Closed'],window:['Open','Closed'],vibration:['Shaking','Still']}[e.deviceClass]||['On','Off'];
+    const pair={occupancy:['Occupied','Clear'],presence:['Present','Clear'],motion:['Motion','Still'],door:['Open','Closed'],window:['Open','Closed'],vibration:['Shaking','Still'],siren:['Sounding','Quiet']}[e.deviceClass]||['On','Off'];
     return e.value?pair[0]:pair[1];
   }
   if(typeof e.value==='number')return `${Number.isInteger(e.value)?e.value:e.value.toFixed(1)}${e.unit?(e.unit==='%'?'%':' '+e.unit):''}`;
@@ -1223,6 +1225,7 @@ function devMatches(d,words){
 function devIcon(d){
   const op=OPEN_BY_ID[d.opening]; if(op)return openingIcon(op,openingState(op).st);
   const es=entitiesOf(d.id);
+  if(es.some(e=>e.deviceClass==='siren'))return IMG('alarm');
   if(es.some(e=>e.component==='fan'))return IMG('fan');
   const n=switchesOf(d.id).length; if(n)return IMG(n>1?'lighting':'power');
   if(occupancyOf(d.id))return IMG('motion');
@@ -1246,7 +1249,7 @@ function devReading(d){
     return {text:list?`${state} · ${list}`:state,hot:on>0};
   }
   const e=entitiesOf(d.id).find(e=>!e.diagnostic&&e.value!==null);
-  return {text:e?`${e.name} ${formatValue(e)}`:'No reading yet'};
+  return {text:e?`${e.name} ${formatValue(e)}`:'No reading yet',hot:e?.deviceClass==='siren'&&e.value===true};
 }
 function devRowHtml(d,open){
   const r=devReading(d), st=d.available===false?'down':d.available?'up':'';
@@ -1751,7 +1754,7 @@ function apply(msg){
   if(msg.type==='snapshot'){
     live.brokerUp=msg.connected;
     live.devices=new Map(msg.devices.map(d=>[d.id,d]));
-    live.entities=new Map(msg.entities.map(e=>[e.id,e]));
+    live.entities=new Map(msg.entities.map(e=>[e.id,asReading(e)]));
     msg.entities.forEach(e=>seen(e.at)); msg.devices.forEach(d=>seen(d.availableAt));
     if(msg.alarm){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   } else if(msg.type==='device'){live.devices.set(msg.device.id,msg.device);seen(msg.device.availableAt);refreshLogSoon();}
@@ -1759,7 +1762,7 @@ function apply(msg){
   else if(msg.type==='entity'){
     const was=live.entities.get(msg.entity.id);
     if(sw.busy.has(msg.entity.id)&&(was?.value!==msg.entity.value||was?.speed!==msg.entity.speed))sw.busy.delete(msg.entity.id);
-    live.entities.set(msg.entity.id,msg.entity);seen(msg.entity.at);refreshLogSoon();}
+    live.entities.set(msg.entity.id,asReading(msg.entity));seen(msg.entity.at);refreshLogSoon();}
   else if(msg.type==='alarm'){alarm.status=msg.alarm;if(page==='alarm'||page==='settings')loadAlarm();}
   else if(msg.type==='broker')live.brokerUp=msg.connected;
   render();
