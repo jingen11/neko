@@ -5,6 +5,7 @@ import { isOpening, isRoom, openings, rooms } from "./areas.ts";
 import { addAway, alarms, alarmsSince, aways, clearOverride, DAYS, type Day, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
 import { registerMcp } from "./mcp.ts";
+import { startFrigate } from "./frigate.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -270,5 +271,6 @@ app.get<{ Params: { id: number } }>(
 registerMcp(app);
 
 start(app.log);
+startFrigate(app.log);
 
 await app.listen({ host: config.host, port: config.port });

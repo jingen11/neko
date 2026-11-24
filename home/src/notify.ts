@@ -1,9 +1,11 @@
 import { config } from "./config.ts";
+import { isCamera, snapshotFor } from "./frigate.ts";
 
 /**
  * Push notifications through ntfy (NTFY_URL, e.g. http://127.0.0.1:2586/home; off while empty).
  * Only alarms are sent: the alarm module calls this for something turning on, or a board going
  * offline, while armed. The wording matches the dashboard's Alarm tab.
+ * A camera's alarm (frigate.ts) carries its snapshot of the person as an image attachment.
  */
 
 const OCC = ["occupancy", "presence", "motion"];
@@ -42,12 +44,19 @@ export function notifyAlarm(n: AlarmNotice) {
   lastSent.set(key, n.at);
 
   const time = new Date(n.at).toTimeString().slice(0, 5);
-  fetch(config.ntfyUrl, {
-    method: "POST",
-    headers: { Title: `Alarm: ${title}`, Tags: tags, Priority: String(priority), Click: config.dashboardUrl },
-    body: `${n.label} at ${time}`,
-    signal: AbortSignal.timeout(10_000),
-  })
+  const message = `${n.label} at ${time}`;
+  const headers: Record<string, string> = { Title: `Alarm: ${title}`, Tags: tags, Priority: String(priority), Click: config.dashboardUrl };
+  const image = n.kind === "entity" && isCamera(n.device) ? snapshotFor(n.device, n.at) : Promise.resolve(null);
+  image
+    .then((jpeg) =>
+      fetch(config.ntfyUrl, {
+        method: "POST",
+        // with an image, the body is the image and the message goes in a header, RFC 2047-encoded so a label can be any text
+        headers: jpeg ? { ...headers, Filename: `${n.device}.jpg`, Message: `=?UTF-8?B?${Buffer.from(message).toString("base64")}?=` } : headers,
+        body: jpeg ? new Uint8Array(jpeg) : message,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    )
     .then((res) => {
       if (!res.ok) console.error(`ntfy: ${res.status} ${res.statusText}`);
     })
