@@ -2,7 +2,7 @@ import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { command, device, entity, place, setSpeed, snapshot, start, subscribe } from "./broker.ts";
 import { isOpening, isRoom, openings, rooms } from "./areas.ts";
-import { addAway, alarms, alarmsSince, aways, clearOverride, DAYS, type Day, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
+import { addAway, alarms, alarmsSince, aways, clearOverride, clearSiren, DAYS, type Day, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
 import { registerMcp } from "./mcp.ts";
 import { startFrigate } from "./frigate.ts";
@@ -149,8 +149,8 @@ app.post<{ Params: { node: string; object: string }; Body: { on?: boolean; speed
   },
   async (req, reply) => {
     const id = `${req.params.node}/${req.params.object}`;
-    // the siren follows the alarm (src/siren.ts): it starts on an alarm and only disarming stops it
-    if (req.params.object === "switch_siren_on") return reply.code(403).send({ error: "the siren follows the alarm: arm or disarm it instead (POST /api/alarm)" });
+    // the siren follows the alarm (src/siren.ts): it starts on an alarm, and clearing it or disarming stops it
+    if (req.params.object === "switch_siren_on") return reply.code(403).send({ error: "the siren follows the alarm: clear it with DELETE /api/alarm/siren (stays armed), or disarm with POST /api/alarm" });
     const { on, speed } = req.body;
     // a speed turns the fan on, so "off at speed 3" is just off
     const r = speed !== undefined && on !== false ? await setSpeed(id, speed) : await command(id, on ?? true);
@@ -173,6 +173,9 @@ app.post<{ Body: { armed: boolean } }>(
   { schema: { body: { type: "object", required: ["armed"], properties: { armed: { type: "boolean" } } } } },
   async (req) => setArmed(req.body.armed),
 );
+
+/** Stop the siren and stay armed; the next alarm sounds it again. */
+app.delete("/api/alarm/siren", async () => clearSiren());
 
 /** Drop a manual arm/disarm and follow the schedule again. */
 app.delete("/api/alarm/override", async () => clearOverride());
