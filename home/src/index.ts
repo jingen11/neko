@@ -148,6 +148,8 @@ app.post<{ Params: { node: string; object: string }; Body: { on?: boolean; speed
   },
   async (req, reply) => {
     const id = `${req.params.node}/${req.params.object}`;
+    // the siren follows the alarm (src/siren.ts): it starts on an alarm and only disarming stops it
+    if (req.params.object === "switch_siren_on") return reply.code(403).send({ error: "the siren follows the alarm: arm or disarm it instead (POST /api/alarm)" });
     const { on, speed } = req.body;
     // a speed turns the fan on, so "off at speed 3" is just off
     const r = speed !== undefined && on !== false ? await setSpeed(id, speed) : await command(id, on ?? true);

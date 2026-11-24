@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { type Entity, entity, subscribe, type Update } from "./broker.ts";
 import { config, layout } from "./config.ts";
 import { notifyAlarm } from "./notify.ts";
+import { keepSounding, silence } from "./siren.ts";
 
 /**
  * The alarm, kept in home.db so a restart doesn't drop it.
@@ -17,7 +18,7 @@ import { notifyAlarm } from "./notify.ts";
  * (e.g. disarm at 23:30 inside a 23:00-07:00 period -> stays disarmed until 07:00, then follows the schedule).
  *
  * Each armed stretch is a session; while one is open, every live sensor change and every board going
- * online/offline is written to alarm_events. Retained values replayed on (re)connect are skipped:
+ * online/offline is written to alarm_events. Each alarm among them sends a notification, and the first one that isn't a low battery or tamper starts the siren, which sounds until disarmed. Retained values replayed on (re)connect are skipped:
  * they are old readings, not something that happened while armed.
  */
 
@@ -73,6 +74,10 @@ if (!(db.prepare("PRAGMA table_info(alarm_periods)").all() as { name: string }[]
 // events from before the alarm flag: null, and TRIGGER falls back to the old rule for them
 if (!(db.prepare("PRAGMA table_info(alarm_events)").all() as { name: string }[]).some((c) => c.name === "alarm")) {
   db.exec("ALTER TABLE alarm_events ADD COLUMN alarm INTEGER");
+}
+// 1 = an alarm that sounds the siren; 0 for everything else, and for alarms that only notify (low battery, tamper)
+if (!(db.prepare("PRAGMA table_info(alarm_events)").all() as { name: string }[]).some((c) => c.name === "siren")) {
+  db.exec("ALTER TABLE alarm_events ADD COLUMN siren INTEGER NOT NULL DEFAULT 0");
 }
 
 // ---- types ----
@@ -232,8 +237,9 @@ const TRIGGER =
 const qAlarms = db.prepare(`SELECT * FROM alarm_events WHERE ${TRIGGER} AND (at < ? OR (at = ? AND id < ?)) ORDER BY at DESC, id DESC LIMIT ?`);
 const qAlarmsSince = db.prepare(`SELECT COUNT(*) AS n FROM alarm_events WHERE ${TRIGGER} AND at >= ?`);
 const qInsert = db.prepare(
-  "INSERT INTO alarm_events (session_id, at, kind, device, entity, name, room, opening, value, unit, alarm) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "INSERT INTO alarm_events (session_id, at, kind, device, entity, name, room, opening, value, unit, alarm, siren) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 );
+const qRinging = db.prepare("SELECT 1 FROM alarm_events WHERE session_id = ? AND siren = 1 LIMIT 1");
 
 let current: AlarmSession | null = (() => {
   const r = qOpen.get() as Row | undefined;
@@ -265,6 +271,7 @@ function evaluate(): AlarmStatus {
   } else if (!armed && current) {
     qDisarm.run(Date.now());
     current = null;
+    silence();
   }
 
   const s: AlarmStatus = { armed, reason, scheduled, override: o && { armed: o.armed, at: o.at }, session: current };
@@ -323,6 +330,15 @@ function isAlarm(e: Entity): boolean {
   return true;
 }
 
+/**
+ * Whether an alarm sounds the siren as well as notifying. A low battery or a tamper switch (e.g. a sensor's
+ * cover opened) only notifies: neither is a break-in, and the siren would ring until someone disarmed.
+ * Nor do the other diagnostic warnings, like the bridge's restart_required.
+ */
+function soundsSiren(e: Entity): boolean {
+  return !e.diagnostic && e.deviceClass !== "battery" && e.deviceClass !== "tamper";
+}
+
 /** availableAt of the last online/offline flip logged per device */
 const availLogged = new Map<string, number>();
 
@@ -338,8 +354,10 @@ function record(u: Update) {
     if (e.diagnostic && e.component !== "binary_sensor") return;
     const place = layout.devices[e.device];
     const alarm = isAlarm(e);
-    qInsert.run(current.id, e.at, "entity", e.device, e.id, e.name, place?.room ?? null, place?.opening ?? null, JSON.stringify(e.value), e.unit, alarm ? 1 : 0);
+    const siren = alarm && soundsSiren(e);
+    qInsert.run(current.id, e.at, "entity", e.device, e.id, e.name, place?.room ?? null, place?.opening ?? null, JSON.stringify(e.value), e.unit, alarm ? 1 : 0, siren ? 1 : 0);
     if (alarm) {
+      if (siren) keepSounding();
       notifyAlarm({ kind: "entity", device: e.device, label: place?.label ?? e.device, deviceClass: e.deviceClass, name: e.name, opening: place?.opening ?? null, at: e.at });
     }
   } else if (u.type === "device") {
@@ -348,14 +366,24 @@ function record(u: Update) {
     // which are the ones that set a new availableAt
     if (d.available === null || d.availableAt === null || availLogged.get(d.id) === d.availableAt) return;
     availLogged.set(d.id, d.availableAt);
-    qInsert.run(current.id, d.availableAt, "availability", d.id, null, null, d.room, d.opening, JSON.stringify(d.available), null, d.available ? 0 : 1);
+    qInsert.run(current.id, d.availableAt, "availability", d.id, null, null, d.room, d.opening, JSON.stringify(d.available), null, d.available ? 0 : 1, d.available ? 0 : 1);
     if (!d.available) {
+      keepSounding();
       notifyAlarm({ kind: "availability", device: d.id, label: d.label, deviceClass: null, name: null, opening: d.opening, at: d.availableAt });
     }
   }
 }
 
+/** The siren rings from the first alarm of an armed stretch until it is disarmed. Read from the log, so a restart mid-alarm carries on. */
+function ring() {
+  if (current && qRinging.get(current.id)) keepSounding();
+}
+
 subscribe(record);
 evaluate();
-// periods start and end on the minute; check a few times a minute
-setInterval(evaluate, 15_000).unref();
+ring();
+// periods start and end on the minute; check a few times a minute. The siren is checked as often, to restart it if it stops.
+setInterval(() => {
+  evaluate();
+  ring();
+}, 15_000).unref();
