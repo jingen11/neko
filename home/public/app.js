@@ -769,7 +769,8 @@ const asReading=e=>objOf(e)==='switch_siren_on'?{...e,command:false,name:'Siren'
 const loadOf=e=>live.devices.get(e.device)?.loads?.[objOf(e)]||null;
 // "Top", "Center", "Bottom" for an Aqara rocker; a plug's only relay has no name of its own
 const switchName=e=>e.name&&e.name!=='switch'?e.name:'Relay';
-const loadName=e=>{const l=loadOf(e);return l?(l.label||KIND[l.kind]?.name||l.kind):switchName(e);};
+// a remote's fan has a name of its own ("Dining room fan"); a rocker's is just "Top"
+const loadName=e=>{const l=loadOf(e);return l?(l.label||(e.component==='fan'&&e.name)||KIND[l.kind]?.name||l.kind):switchName(e);};
 /** the room an appliance is in: its own (a lobby light on the living room's switch), else its switch's */
 const loadRoom=(e,d)=>ROOM_BY_ID[loadOf(e)?.room]||ROOM_BY_ID[d.room]||null;
 /** switches with an appliance in a room, optionally only one room's: [{e, d, r}] */
@@ -1190,17 +1191,18 @@ function bindDevices(){
   panel.querySelectorAll('[data-act="edit-cancel"]').forEach(b=>b.onclick=()=>{edit.id=null;render();});
   const form=panel.querySelector('.dev-edit'); if(!form)return;
   const d=live.devices.get(form.dataset.form);
-  form.querySelector('#ed-label').addEventListener('input',e=>{edit.label=e.target.value;});
-  form.querySelector('#ed-place').addEventListener('change',e=>{edit.place=e.target.value;});
-  form.querySelectorAll('[data-load]').forEach(s=>s.addEventListener('change',e=>{
+  // handlers are properties, not listeners: the panel is patched in place, so these elements are bound again on every redraw
+  form.querySelector('#ed-label').oninput=e=>{edit.label=e.target.value;};
+  form.querySelector('#ed-place').onchange=e=>{edit.place=e.target.value;};
+  form.querySelectorAll('[data-load]').forEach(s=>s.onchange=e=>{
     const k=e.target.dataset.load; edit.loads[k]={...edit.loads[k],kind:e.target.value};
     // the name box enables with a kind; redraw now (the select keeps focus, so a live redraw would wait)
     const inp=form.querySelector(`[data-load-label="${CSS.escape(k)}"]`); inp.disabled=!e.target.value;
     form.querySelector(`[data-load-room="${CSS.escape(k)}"]`).disabled=!e.target.value;
     inp.placeholder=`${KIND[e.target.value]?.name||'Name'}, e.g. ${e.target.value==='fan'?'Ceiling fan':'Ceiling light'}`;
-  }));
-  form.querySelectorAll('[data-load-label]').forEach(i=>i.addEventListener('input',e=>{const k=e.target.dataset.loadLabel;edit.loads[k]={...edit.loads[k],label:e.target.value};}));
-  form.querySelectorAll('[data-load-room]').forEach(i=>i.addEventListener('change',e=>{const k=e.target.dataset.loadRoom;edit.loads[k]={...edit.loads[k],room:e.target.value};}));
+  });
+  form.querySelectorAll('[data-load-label]').forEach(i=>i.oninput=e=>{const k=e.target.dataset.loadLabel;edit.loads[k]={...edit.loads[k],label:e.target.value};});
+  form.querySelectorAll('[data-load-room]').forEach(i=>i.onchange=e=>{const k=e.target.dataset.loadRoom;edit.loads[k]={...edit.loads[k],room:e.target.value};});
   form.onsubmit=e=>{e.preventDefault(); if(d&&!edit.busy)saveDevice(d);};
 }
 /* ---------- the Devices tab: two sections (sensors · switches and remotes), each grouped by room, with a search ----------
@@ -1251,34 +1253,57 @@ function devReading(d){
   const e=entitiesOf(d.id).find(e=>!e.diagnostic&&e.value!==null);
   return {text:e?`${e.name} ${formatValue(e)}`:'No reading yet',hot:e?.deviceClass==='siren'&&e.value===true};
 }
-function devRowHtml(d,open){
+function devRowHtml(d,open,tile=false){
   const r=devReading(d), st=d.available===false?'down':d.available?'up':'';
-  return `<li class="dev-item${open?' open':''}">
+  return `<li class="dev-item${tile?' tile':''}${open?' open':''}">
     <button class="dev-row" data-dev="${esc(d.id)}" aria-expanded="${open}">
       <span class="ico sm ${d.available===false?'off':r.hot?'on':''}">${devIcon(d)}</span>
       <span class="dev-row-text"><b title="${esc(d.label)}">${esc(d.label)}</b>
-        <small>${[`<span class="${r.hot?'hot':''}">${esc(r.text)}</span>`,devWhere(d)&&esc(devWhere(d))].filter(Boolean).join(' · ')}</small></span>
-      <span class="pip ${st}" title="${st==='down'?'Offline':st==='up'?'Online':'Online state unknown'}"></span><span class="chev" aria-hidden="true"></span>
+        <small>${[`<span class="${r.hot?'hot':''}">${esc(tile?r.text.split(' · ')[0]:r.text)}</span>`,!tile&&devWhere(d)&&esc(devWhere(d))].filter(Boolean).join(' · ')}</small></span>
+      <span class="pip ${st}" title="${st==='down'?'Offline':st==='up'?'Online':'Online state unknown'}"></span>${tile?'':'<span class="chev" aria-hidden="true"></span>'}
     </button>
     ${open?`<div class="dev-detail">${devDetailHtml(d)}</div>`:''}</li>`;
+}
+/** a fan a remote drives, as its own tile in the fan's room: on/off and its speeds */
+function fanTileHtml({e,d}){
+  const off=d.available===false, on=e.value===true&&!off;
+  const state=off?'Offline':e.value===null?'No state yet':on?(e.speed?`Speed ${e.speed} of ${e.speeds}`:'On'):'Off';
+  return `<li class="dev-item tile fan-tile">
+    <div class="fan-top"><span class="ico sm ${on?'on':off?'off':''}">${IMG(KIND.fan.icon)}</span>
+      <span class="dev-row-text"><b title="${esc(loadName(e))}">${esc(loadName(e))}</b><small><span class="${on?'hot':''}">${esc(state)}</span> · ${esc(d.label)}</small></span>
+      ${switchBtn(e,d)}</div>
+    ${speedBtns(e,d)}</li>`;
+}
+/** a remote's fans: listed in their own rooms (a fan's room is its load's, else the remote's), not under the remote */
+const fanTiles=()=>[...live.devices.values()].flatMap(d=>entitiesOf(d.id).filter(e=>e.component==='fan'&&e.command)
+  .map(e=>({fan:true,e,d,r:loadRoom(e,d)||roomOfDevice(d),label:loadName(e)})));
+function fanMatches(f,words){
+  const text=[f.label,f.d.label,f.r?.name,f.r&&LVNAME[f.r.lv],'fan'].filter(Boolean).join(' ').toLowerCase();
+  return words.every(w=>text.includes(w));
 }
 function devicesHtml(){
   if(edit.id&&!live.devices.has(edit.id)&&!edit.busy)edit.id=null; // renamed in Zigbee2MQTT, or gone
   if(devView.open&&!live.devices.has(devView.open))devView.open=null;
   const words=devWords(), all=[...live.devices.values()];
-  const lists=Object.fromEntries(Object.keys(DEV_TABS).map(t=>[t,all.filter(d=>isControl(d)===(t==='controls')&&devMatches(d,words))]));
-  const list=lists[devView.tab], other=devView.tab==='sensors'?'controls':'sensors';
+  // items: a device, or (switches & remotes) a remote's fan, which is listed in its own room
+  const lists=Object.fromEntries(Object.keys(DEV_TABS).map(t=>[t,[
+    ...all.filter(d=>isControl(d)===(t==='controls')&&devMatches(d,words)).map(d=>({d,r:roomOfDevice(d),label:d.label})),
+    ...(t==='controls'?fanTiles().filter(f=>fanMatches(f,words)):[])]]));
+  const list=lists[devView.tab], other=devView.tab==='sensors'?'controls':'sensors', grid=devView.tab==='controls';
   // a search down to one device opens it
-  const openId=edit.id||(words.length&&list.length===1?list[0].id:devView.open);
-  const byLabel=(a,b)=>a.label.localeCompare(b.label);
+  const openId=edit.id||(words.length&&list.length===1&&!list[0].fan?list[0].d.id:devView.open);
+  // fans first in a room (they're wide), then by name
+  const order=(a,b)=>(b.fan?1:0)-(a.fan?1:0)||a.label.localeCompare(b.label);
   // devices placed nowhere come first, so a freshly paired one is easy to find; then the rooms in house order
-  const groups=[{r:null,ds:list.filter(d=>!roomOfDevice(d))},...ROOMS.map(r=>({r,ds:list.filter(d=>roomOfDevice(d)===r)}))]
-    .filter(g=>g.ds.length);
-  const groupHtml=({r,ds})=>`<section class="dev-group${r?'':' lost'}" aria-label="${esc(r?r.name:'Not placed')}">
+  const groups=[{r:null,its:list.filter(i=>!i.r)},...ROOMS.map(r=>({r,its:list.filter(i=>i.r===r)}))]
+    .filter(g=>g.its.length);
+  const groupHtml=({r,its})=>{
+    const ds=[...new Set(its.map(i=>i.d))], n=its.length;
+    return `<section class="dev-group${r?'':' lost'}" aria-label="${esc(r?r.name:'Not placed')}">
     <header class="grp-head"><span class="ico sm">${r?roomIcon(r):IMG('other')}</span>
-      <div><b>${esc(r?r.name:'Not placed')}</b><span>${r?`${LVNAME[r.lv]} · `:'Give each a room, door or window · '}${ds.length} ${ds.length===1?'device':'devices'}</span></div>
+      <div><b>${esc(r?r.name:'Not placed')}</b><span>${r?`${LVNAME[r.lv]} · `:'Give each a room, door or window · '}${n} ${grid?(n===1?'control':'controls'):(n===1?'device':'devices')}</span></div>
       ${statusHtml(ds)}</header>
-    <ul class="dev-list">${ds.sort(byLabel).map(d=>devRowHtml(d,d.id===openId)).join('')}</ul></section>`;
+    <ul class="${grid?'dev-grid':'dev-list'}">${its.sort(order).map(i=>i.fan?fanTileHtml(i):devRowHtml(i.d,i.d.id===openId,grid)).join('')}</ul></section>`;};
   const tabs=`<div class="tabs" role="group" aria-label="Kind of device">${Object.entries(DEV_TABS).map(([t,name])=>
     `<button data-tab="${t}" aria-pressed="${t===devView.tab}">${name}<span class="count">${lists[t].length}</span></button>`).join('')}</div>`;
   let body;
@@ -1301,7 +1326,7 @@ function devDetailHtml(d){
         <dt>${op?'On':'Room'}</dt><dd>${op?esc(op.name):room?`${esc(room.name)}, ${LVNAME[room.lv].toLowerCase()}`:'Not placed yet'}</dd>
         ${[false,true].map(diag=>{const es=entitiesOf(d.id).filter(e=>!!e.diagnostic===diag);
           return (diag&&es.length?'<dt class="facts-group">Diagnostics</dt>':'')+es.map(e=>e.command
-            ?`<dt>${esc(switchName(e))} switch</dt><dd class="sw-fact"><span>${loadOf(e)?`${esc(KIND[loadOf(e).kind]?.name||loadOf(e).kind)}${loadOf(e).label?` · ${esc(loadOf(e).label)}`:''}${ROOM_BY_ID[loadOf(e).room]&&loadOf(e).room!==d.room?` · ${esc(ROOM_BY_ID[loadOf(e).room].name)}`:''}`:'Not assigned'}</span>${switchBtn(e,d)}</dd>`
+            ?`<dt>${esc(switchName(e))} switch</dt><dd class="sw-fact"><span>${loadOf(e)?`${esc(KIND[loadOf(e).kind]?.name||loadOf(e).kind)}${loadOf(e).label?` · ${esc(loadOf(e).label)}`:''}${ROOM_BY_ID[loadOf(e).room]&&loadOf(e).room!==d.room?` · ${esc(ROOM_BY_ID[loadOf(e).room].name)}`:''}`:'Not assigned'}</span>${switchBtn(e,d)}</dd>${e.speeds?`<dd class="sw-speeds">${speedBtns(e,d)}</dd>`:''}`
             :`<dt>${esc(e.name)}</dt><dd>${esc(formatValue(e))}${e.at?`, ${ago(e.at)}`:''}</dd>`).join('');}).join('')}
         <dt>IP</dt><dd>${esc(d.ip||'—')}</dd>
         <dt>Board</dt><dd>${esc([d.model,d.firmware&&'ESPHome '+d.firmware].filter(Boolean).join(' · ')||'—')}</dd>
@@ -1573,6 +1598,28 @@ function bindAlarm(){
   const note=panel.querySelector('#away-note');
   if(note)note.oninput=()=>{picker.note=note.value;};
 }
+/* The panel is patched in place, not replaced: replacing it (innerHTML) under a scrolling list jumps the scroll back,
+   and swaps buttons out from under a click. Elements are matched by position, so an unchanged page touches nothing. */
+function morph(el,html){
+  const t=document.createElement('template'); t.innerHTML=html;
+  patchKids(el,t.content);
+}
+function patchKids(a,b){
+  const an=[...a.childNodes], bn=[...b.childNodes];
+  bn.forEach((n,i)=>{if(i<an.length)patchNode(an[i],n);else a.appendChild(n);});
+  for(let i=bn.length;i<an.length;i++)an[i].remove();
+}
+function patchNode(a,b){
+  if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName){a.replaceWith(b);return;}
+  if(a.nodeType!==1){if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return;}
+  for(const {name} of [...a.attributes])if(!b.hasAttribute(name))a.removeAttribute(name);
+  for(const {name,value} of [...b.attributes])if(a.getAttribute(name)!==value)a.setAttribute(name,value);
+  // a field's live value isn't its attribute: set it, except under the caret
+  if((a.tagName==='INPUT'||a.tagName==='SELECT'||a.tagName==='TEXTAREA')&&a!==document.activeElement){
+    if(a.type==='checkbox'||a.type==='radio')a.checked=b.checked; else if(a.value!==b.value)a.value=b.value;
+  }
+  patchKids(a,b);
+}
 function renderPanel(){
   // keep keyboard focus across live re-renders
   const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room||f.dataset?.sw||f.dataset?.tab||(f.classList.contains('dev-row')?f.dataset.dev:null)):null;
@@ -1584,18 +1631,17 @@ function renderPanel(){
     if(typing)return; // the note field: don't redraw under the caret (its text is kept in pick.note)
     const html=page==='alarm'?alarmHtml():settingsHtml();
     if(panel._html===html)return;
-    const top=panel.scrollTop; panel._html=html; panel.innerHTML=html; panel.scrollTop=top;
+    panel._html=html; morph(panel,html);
     bindAlarm();
     if(f?.dataset?.act){const q=[['act',f.dataset.act],['id',f.dataset.id],['v',f.dataset.v]].filter(([,v])=>v).map(([k,v])=>`[data-${k}="${CSS.escape(v)}"]`).join('');
       panel.querySelector(q)?.focus();}
     return;
   }
-  panel._html=null;
   // the device form: don't redraw under the caret or an open dropdown (its values are kept in `edit`)
   if(page==='devices'&&edit.id&&!edit.busy&&f&&panel.contains(f)&&f.closest('.dev-edit')&&f.matches('input,select'))return;
-  const top=panel.scrollTop;
-  panel.innerHTML=page==='devices'?devicesHtml():overviewHtml();
-  panel.scrollTop=top;
+  const html=page==='devices'?devicesHtml():overviewHtml();
+  if(panel._html===html)return;
+  panel._html=html; morph(panel,html);
   if(page==='devices')bindDevices();
   panel.querySelectorAll('.row').forEach(b=>b.onclick=()=>{const r=ROOM_BY_ID[b.dataset.id];select(r===sel?null:r);});
   panel.querySelectorAll('.mini[data-room]').forEach(b=>b.onclick=()=>select(ROOM_BY_ID[b.dataset.room]));
