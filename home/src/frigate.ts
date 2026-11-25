@@ -17,6 +17,10 @@ import { config } from "./config.ts";
  * (notification plus siren). The notification carries the snapshot (see notify.ts).
  *
  * The device is named after the camera (e.g. living_room_main); its label and room are set on the Devices tab.
+ *
+ * Recording follows the alarm: Frigate only records while armed (setRecording, from index.ts), to save disk.
+ * Detection stays on, so the Person sensor works when disarmed too. Frigate starts with recording on (its config)
+ * after a restart, so the retained frigate/<camera>/recordings/state is watched, and "set" sent again when it differs.
  */
 
 const STATE = (cam: string) => `home/frigate/${cam}/person`;
@@ -24,23 +28,50 @@ const cameras = new Set<string>();
 const people = new Map<string, boolean>();
 /** the latest person snapshot per camera, and when it arrived (0: retained, from before we connected) */
 const snapshots = new Map<string, { jpeg: Buffer; at: number }>();
+/** whether Frigate should be recording: the alarm is armed. null until the alarm has said */
+let wantRecording: boolean | null = null;
+/** what each camera last reported for recordings/state */
+const recording = new Map<string, boolean>();
+/** when "set" was last sent per camera: if Frigate won't switch, don't argue with it more than once a minute */
+const recordingSent = new Map<string, number>();
+let client: mqtt.MqttClient | null = null;
+
+function syncRecording(cam: string) {
+  if (!client || wantRecording === null || recording.get(cam) === wantRecording) return;
+  if (Date.now() - (recordingSent.get(cam) ?? 0) < 60_000) return;
+  recordingSent.set(cam, Date.now());
+  client.publish(`frigate/${cam}/recordings/set`, wantRecording ? "ON" : "OFF");
+}
+
+/** Record only while the alarm is armed. */
+export function setRecording(on: boolean) {
+  if (wantRecording === on) return;
+  wantRecording = on;
+  recordingSent.clear();
+  for (const cam of cameras) syncRecording(cam);
+}
 
 export function startFrigate(log: { info: (m: string) => void; warn: (m: string) => void }) {
-  const client = mqtt.connect(config.mqttUrl, {
+  const c = (client = mqtt.connect(config.mqttUrl, {
     username: config.mqttUsername || undefined,
     password: config.mqttPassword || undefined,
     clientId: `home-frigate-${randomUUID().slice(0, 8)}`,
     reconnectPeriod: 5000,
-  });
-  client.on("connect", () => client.subscribe(["frigate/+/enabled/state", "frigate/+/person", "frigate/+/person/snapshot"]));
-  client.on("error", (err) => log.warn(`frigate mqtt: ${err.message}`));
-  client.on("message", (topic, payload, packet) => {
+  }));
+  c.on("connect", () => c.subscribe(["frigate/+/enabled/state", "frigate/+/person", "frigate/+/person/snapshot", "frigate/+/recordings/state"]));
+  c.on("error", (err) => log.warn(`frigate mqtt: ${err.message}`));
+  c.on("message", (topic, payload, packet) => {
     const [, cam, kind, sub] = topic.split("/");
-    if (kind === "enabled" && sub === "state") {
+    if (kind === "recordings" && sub === "state") {
+      const on = payload.toString() === "ON";
+      if (recording.get(cam) !== on) log.info(`frigate ${cam} recording ${on ? "on" : "off"}`);
+      recording.set(cam, on);
+      if (cameras.has(cam)) syncRecording(cam);
+    } else if (kind === "enabled" && sub === "state") {
       if (cameras.has(cam)) return;
       cameras.add(cam);
       log.info(`frigate camera ${cam}`);
-      client.publish(
+      c.publish(
         `${config.discoveryPrefix}/binary_sensor/${cam}/person/config`,
         JSON.stringify({
           name: "Person",
@@ -51,12 +82,13 @@ export function startFrigate(log: { info: (m: string) => void; warn: (m: string)
         }),
         { retain: true },
       );
+      syncRecording(cam);
     } else if (kind === "person" && sub === undefined) {
       if (!cameras.has(cam)) return; // a zone, not a camera
       const on = Number(payload.toString()) > 0;
       if (people.get(cam) === on) return;
       people.set(cam, on);
-      client.publish(STATE(cam), on ? "ON" : "OFF", { retain: true });
+      c.publish(STATE(cam), on ? "ON" : "OFF", { retain: true });
     } else if (kind === "person" && sub === "snapshot") {
       snapshots.set(cam, { jpeg: Buffer.from(payload), at: packet.retain ? 0 : Date.now() });
     }
