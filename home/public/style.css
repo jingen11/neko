@@ -449,3 +449,15 @@ button.tool:active img{transform:scale(.88)}
 .ctl-room.open .ctl-room-btn{height:auto;grid-template-columns:auto minmax(0,1fr) auto auto;grid-template-areas:"ico txt pip chev";align-items:center}
 .ctl-room.open .ctl-room-btn>.chev{grid-area:chev;transform:rotate(-135deg);margin:4px 4px 0 0}
 .ctl-room.open>.dev-grid{padding:0 10px 10px}
+
+/* temperature & humidity charts (Overview) */
+.clim-tabs{grid-template-columns:repeat(3,1fr)}
+.clim-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:4px}
+.clim-range{font-size:12px;color:var(--muted)}
+.clim-plot{position:relative;touch-action:pan-y}
+.clim-plot svg{display:block;width:100%;height:auto;overflow:visible}
+.clim-grid{stroke:var(--line);stroke-width:1}
+.clim-ax{fill:var(--muted);stroke:none;font:500 10px var(--f-mono)}
+.clim-tip{position:absolute;top:-6px;transform:translate(-50%,-100%);padding:4px 8px;border-radius:8px;background:var(--ink);color:#fff;
+  font-size:12px;white-space:nowrap;pointer-events:none;box-shadow:var(--shadow)}
+.clim-tip b{font-weight:600;margin-right:4px}
