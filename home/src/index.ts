@@ -5,7 +5,7 @@ import { isOpening, isRoom, openings, rooms } from "./areas.ts";
 import { addAway, alarms, alarmsSince, aways, clearOverride, clearSiren, DAYS, type Day, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
 import { registerMcp } from "./mcp.ts";
-import { startFrigate } from "./frigate.ts";
+import { setRecording, startFrigate } from "./frigate.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -275,5 +275,8 @@ registerMcp(app);
 
 start(app.log);
 startFrigate(app.log);
+// Frigate records only while the alarm is armed
+setRecording(status().armed);
+onAlarm((s) => setRecording(s.armed));
 
 await app.listen({ host: config.host, port: config.port });
