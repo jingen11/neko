@@ -383,10 +383,10 @@ button.tool:active img{transform:scale(.88)}
 .tabs button[aria-pressed="true"]{background:#fff;color:var(--ink);box-shadow:var(--glow)}
 .tabs .count{font:600 12px var(--f-mono);min-width:22px;padding:1px 6px;border-radius:10px;background:var(--accent-weak);color:var(--ink)}
 .dev-group{display:flex;flex-direction:column;gap:8px}
-.grp-head{display:flex;align-items:center;gap:10px;margin-top:6px}
+.grp-head{display:flex;align-items:center;gap:10px;margin-top:6px;padding-left:11px} /* the room icon in line with the device icons under it */
 .grp-head>div{flex:1;min-width:0}
 .grp-head b{display:block;font:600 15px var(--f-head)}
-.grp-head span:not(.status){display:block;font:500 12.5px var(--f-mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grp-head>div>span{display:block;font:500 12.5px var(--f-mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dev-group.lost .grp-head b{color:var(--warm-ink)}
 .ico.sm{width:36px;height:36px;border-radius:10px}
 .ico.sm img{width:20px;height:20px}
@@ -409,3 +409,26 @@ button.tool:active img{transform:scale(.88)}
 .dev-detail .dev-id{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dev-detail .facts dd{min-width:0}
 .btn.ghost.inline{min-height:36px;margin-left:4px;color:var(--accent)}
+
+/* Switches & remotes: a grid of tiles; a tile opens across the whole row */
+.dev-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+/* a tile: icon and online dot on top, the name (up to two lines) and its state under them */
+.dev-item.tile .dev-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"ico pip" "txt txt";gap:8px;align-items:start;padding:10px 12px 12px 10px;height:100%}
+.dev-item.tile .dev-row>.ico{grid-area:ico}
+.dev-item.tile .dev-row>.pip{grid-area:pip;margin-top:4px}
+.dev-item.tile .dev-row>.dev-row-text{grid-area:txt}
+.dev-item.tile .dev-row>.dev-row-text b{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.3}
+.dev-item.tile.open{grid-column:1/-1}
+.dev-item.tile.open .dev-row{height:auto}
+/* a fan: across the row, its speeds under it */
+.fan-tile{grid-column:1/-1;display:flex;flex-direction:column;gap:10px;padding:10px}
+.fan-top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center}
+.fan-tile .speeds{display:grid;grid-template-columns:repeat(auto-fit,minmax(32px,1fr));gap:6px}
+.fan-tile .spd{min-width:0;min-height:40px;padding:0}
+/* a fan's speeds in a device's details: a row of their own across both columns (the switch names make the value column narrow) */
+.facts dd.sw-speeds{grid-column:1/-1}
+.sw-speeds .speeds{display:grid;grid-template-columns:repeat(auto-fit,minmax(32px,1fr));gap:6px}
+.sw-speeds .spd{min-width:0;padding:0}
+/* long switch names ("Master bedroom fan switch") wrap instead of crushing the values to a word per line */
+.dev-detail .facts{grid-template-columns:fit-content(45%) minmax(0,1fr)}
+.facts dd.sw-fact>span{overflow-wrap:normal}
