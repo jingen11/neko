@@ -1071,6 +1071,7 @@ function overviewHtml(){
     </article>
     ${openingsHtml(ops,hot)}
     ${appliancesHtml()}
+    ${climateHtml()}
     <h2 class="section">Rooms with sensors</h2>
     ${rooms.length?`<ul class="rows">${rows}</ul>`:`<p class="empty">${live.everConnected?'No room has a sensor yet.':'Connecting…'}</p>`}
     ${lost.length?`<p class="empty">Not placed: ${lost.map(d=>`<b>${esc(d.label)}</b>${d.room||d.opening?` (no “${esc(d.room||d.opening)}”)`:''}`).join(', ')}. Give ${lost.length===1?'it':'each'} a <code>room</code> or <code>opening</code> in <code>layout.json</code> and restart the server.</p>`:''}`;
@@ -1106,6 +1107,104 @@ function appliancesHtml(){
     ${list.length?`<ul class="appls">${list.map(a=>applianceRow(a,true)).join('')}</ul>`:''}
     ${sw.error?`<p class="note err-note" role="alert">${esc(sw.error)}</p>`:''}</article>`;
 }
+/* ---------- temperature & humidity history (recorded every minute by the server, climate.ts) ----------
+   Two small charts per sensor, one per measure (different units, so never one shared axis). */
+const CLIM_RANGES={24:'24 h',168:'7 days',720:'30 days'};
+const clim={hours:24,data:new Map(),loading:false};
+try{const h=Number(localStorage.getItem('climate-hours'));if(CLIM_RANGES[h])clim.hours=h;}catch{}
+/** devices with a (non-diagnostic) temperature or humidity sensor, live */
+function climateDevices(){
+  const ids=new Set([...live.entities.values()].filter(e=>!e.diagnostic&&(e.deviceClass==='temperature'||e.deviceClass==='humidity')).map(e=>e.device));
+  return [...ids].map(id=>live.devices.get(id)).filter(Boolean);
+}
+async function loadClimate(){
+  if(clim.loading)return; clim.loading=true;
+  try{
+    const ids=climateDevices().map(d=>d.id);
+    await Promise.all(ids.map(async id=>{
+      const r=await fetch(`api/climate/${encodeURIComponent(id)}?hours=${clim.hours}`);
+      // a failed load keeps what was shown (or nothing), and is retried on the next minute's refresh
+      clim.data.set(id,{hours:clim.hours,items:r.ok?(await r.json()).items:clim.data.get(id)?.items||[]});
+    }));
+  }catch{} finally{clim.loading=false;}
+  if(page==='overview')renderPanel();
+}
+setInterval(()=>{if(page==='overview'&&!document.hidden)loadClimate();},60_000);
+const CW=340,CH=118,CL=34,CR=8,CT=8,CB=20; // chart box and its margins (viewBox units)
+function climTicks(lo,hi){
+  const span=hi-lo||1, step=[.5,1,2,5,10,20].find(s=>span/s<=4)||50;
+  const a=Math.floor(lo/step)*step,b=Math.ceil(hi/step)*step,t=[];
+  for(let v=a;v<=b+1e-9;v+=step)t.push(+v.toFixed(2));
+  return t;
+}
+function climChart(id,key,label,unit,color,items,from,to){
+  const pts=items.filter(r=>typeof r[key]==='number');
+  const head=`<div class="clim-head"><span class="label">${label}</span>`;
+  if(!pts.length)return `<div class="clim">${head}</div><p class="note">No readings yet. One is saved each minute.</p></div>`;
+  const vals=pts.map(r=>r[key]),lo=Math.min(...vals),hi=Math.max(...vals),pad=Math.max(.5,(hi-lo)*.1);
+  const ticks=climTicks(lo-pad,hi+pad),y0=ticks[0],y1=ticks.at(-1);
+  const X=t=>CL+(t-from)/(to-from)*(CW-CL-CR), Y=v=>CT+(1-(v-y0)/(y1-y0))*(CH-CT-CB);
+  // break the line where readings are missing for more than 3 buckets (sensor offline, server down)
+  const gap=(to-from)/720*3+60_000*2;
+  let d='',prev=null;
+  for(const r of pts){d+=`${prev&&r.at-prev.at<=gap?'L':'M'}${X(r.at).toFixed(1)},${Y(r[key]).toFixed(1)}`;prev=r;}
+  const fmtT=t=>{const dt=new Date(t);return clim.hours<=24?dt.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):dt.toLocaleDateString(undefined,{day:'numeric',month:'short'});};
+  const xs=[from,(from+to)/2,to];
+  const last=pts.at(-1);
+  return `<div class="clim">${head}<span class="clim-range mono">${fmt1(lo)}–${fmt1(hi)} ${unit}</span></div>
+    <div class="clim-plot" data-clim="${esc(id)}" data-key="${key}" data-unit="${esc(unit)}" data-from="${from}" data-to="${to}" data-y0="${y0}" data-y1="${y1}">
+    <svg viewBox="0 0 ${CW} ${CH}" role="img" aria-label="${esc(label)} over the last ${CLIM_RANGES[clim.hours]}: from ${fmt1(lo)} to ${fmt1(hi)} ${esc(unit)}, now ${fmt1(last[key])} ${esc(unit)}">
+      ${ticks.map(v=>`<line class="clim-grid" x1="${CL}" x2="${CW-CR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text class="clim-ax" x="${CL-6}" y="${(Y(v)+3.5).toFixed(1)}" text-anchor="end">${fmt1(v)}</text>`).join('')}
+      ${xs.map((t,i)=>`<text class="clim-ax" x="${X(t).toFixed(1)}" y="${CH-4}" text-anchor="${['start','middle','end'][i]}">${fmtT(t)}</text>`).join('')}
+      <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${X(last.at).toFixed(1)}" cy="${Y(last[key]).toFixed(1)}" r="4" fill="${color}" stroke="#fff" stroke-width="2"/>
+      <g class="clim-hover" hidden><line y1="${CT}" y2="${CH-CB}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3"/><circle r="4" fill="${color}" stroke="#fff" stroke-width="2"/></g>
+    </svg><div class="clim-tip mono" hidden></div></div></div>`;
+}
+const fmt1=v=>(Math.round(v*10)/10).toFixed(1);
+function climateHtml(){
+  const ds=climateDevices();
+  if(!ds.length)return '';
+  if(!clim.loading&&ds.some(d=>clim.data.get(d.id)?.hours!==clim.hours))setTimeout(loadClimate);
+  const to=Date.now(),from=to-clim.hours*3_600_000;
+  return ds.map(d=>{
+    const es=entitiesOf(d.id),t=es.find(e=>e.deviceClass==='temperature'&&!e.diagnostic),h=es.find(e=>e.deviceClass==='humidity'&&!e.diagnostic);
+    const items=clim.data.get(d.id)?.hours===clim.hours?clim.data.get(d.id).items:[];
+    const room=ROOM_BY_ID[d.room]?.name;
+    const now=[typeof t?.value==='number'?`${fmt1(t.value)} °C`:null,typeof h?.value==='number'?`${Math.round(h.value)}% RH`:null].filter(Boolean).join(' · ')||'—';
+    return `<article class="panel-card">
+      <div class="card-head"><div><span class="label">${esc(room?`${room} climate`:d.label)}</span><strong class="big">${now}</strong>
+        ${d.available===false?'<p class="note">Sensor offline: nothing is recorded until it\'s back.</p>':''}</div></div>
+      <div class="tabs clim-tabs" role="group" aria-label="Time range">${Object.entries(CLIM_RANGES).map(([k,n])=>`<button data-crange="${k}" aria-pressed="${Number(k)===clim.hours}">${n}</button>`).join('')}</div>
+      ${t?climChart(d.id,'temperature','Temperature','°C','var(--warm)',items,from,to):''}
+      ${h?climChart(d.id,'humidity','Humidity','%','var(--accent)',items,from,to):''}
+    </article>`;}).join('');
+}
+// range buttons and the hover crosshair, delegated so they survive the panel's live redraws
+panel.addEventListener('click',ev=>{
+  const b=ev.target.closest('[data-crange]'); if(!b)return;
+  clim.hours=Number(b.dataset.crange); try{localStorage.setItem('climate-hours',clim.hours);}catch{}
+  renderPanel(); loadClimate();
+});
+function climHover(ev){
+  const p=ev.target.closest?.('.clim-plot'); 
+  panel.querySelectorAll('.clim-plot').forEach(o=>{if(o!==p){o.querySelector('.clim-hover').hidden=true;o.querySelector('.clim-tip').hidden=true;}});
+  if(!p)return;
+  const {clim:id,key,unit}=p.dataset,from=+p.dataset.from,to=+p.dataset.to,y0=+p.dataset.y0,y1=+p.dataset.y1;
+  const pts=(clim.data.get(id)?.items||[]).filter(r=>typeof r[key]==='number'); if(!pts.length)return;
+  const svg=p.querySelector('svg'),box=svg.getBoundingClientRect(),vx=(ev.clientX-box.left)/box.width*CW;
+  const t=from+(vx-CL)/(CW-CL-CR)*(to-from);
+  let best=pts[0];for(const r of pts)if(Math.abs(r.at-t)<Math.abs(best.at-t))best=r;
+  const x=CL+(best.at-from)/(to-from)*(CW-CL-CR),y=CT+(1-(best[key]-y0)/(y1-y0))*(CH-CT-CB);
+  const g=p.querySelector('.clim-hover'),tip=p.querySelector('.clim-tip');
+  g.hidden=false; g.querySelector('line').setAttribute('x1',x);g.querySelector('line').setAttribute('x2',x);
+  g.querySelector('circle').setAttribute('cx',x);g.querySelector('circle').setAttribute('cy',y);
+  const when=new Date(best.at).toLocaleString(undefined,{weekday:'short',hour:'2-digit',minute:'2-digit'});
+  tip.hidden=false; tip.innerHTML=`<b>${fmt1(best[key])} ${esc(unit)}</b> ${esc(when)}`;
+  const px=x/CW*box.width; tip.style.left=`${Math.min(Math.max(px,60),box.width-60)}px`;
+}
+panel.addEventListener('pointermove',climHover);
+panel.addEventListener('pointerleave',()=>panel.querySelectorAll('.clim-hover,.clim-tip').forEach(e=>e.hidden=true));
 /* ---------- editing a device: label it, put it in a room or on a door/window ----------
    (its name is Zigbee2MQTT's or ESPHome's: rename it there). The form's values live here, not in the DOM:
    the Devices tab redraws on every live reading. */
@@ -1815,6 +1914,7 @@ document.getElementById('reset').onclick=()=>{sel=null;const p=PRESET[view];flyT
 function goPage(p){
   page=p;
   if(p==='alarm'||p==='settings')loadAlarm();
+  if(p==='overview')loadClimate();
   document.querySelectorAll('button.rail-btn').forEach(x=>x.dataset.page===p?x.setAttribute('aria-current','page'):x.removeAttribute('aria-current'));
   panel.scrollTop=0; render();
 }

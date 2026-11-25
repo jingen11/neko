@@ -94,6 +94,18 @@ curl -X POST  localhost:8090/api/switches/0x54ef44100196dcde/switch_top -H 'cont
 curl -X POST  localhost:8090/api/switches/rf-remote/living_room_fan -H 'content-type: application/json' -d '{"speed":3}'
 ```
 
+## Temperature and humidity
+
+Every minute, on the minute, `src/climate.ts` saves the latest temperature and humidity of each device that has them to `climate_readings` in `data/home.db`: one row per device per minute (`device`, `at` in ms, `temperature` °C, `humidity` %). Diagnostic sensors, such as a switch's own chip temperature, aren't recorded. Zigbee sensors only report when a value changes, so a row repeats the last reading until the next one arrives. Nothing is saved while a device is offline or the broker is down, so a gap means "unknown". Today that's the porch sensor (`porch_sensor`); a new sensor is picked up without code changes.
+
+The **Overview** tab charts each one, temperature and humidity separately, over 24 h, 7 days or 30 days, refreshed each minute. Hover a chart to read a value.
+
+```bash
+curl localhost:8090/api/climate                          # devices with history
+curl 'localhost:8090/api/climate/porch_sensor?hours=24'  # averaged to at most ~720 points
+sqlite3 data/home.db "SELECT datetime(at/1000,'unixepoch','localtime'), temperature, humidity FROM climate_readings WHERE device='porch_sensor' ORDER BY at DESC LIMIT 10"
+```
+
 ## ねこ's house tools (MCP)
 
 `POST /mcp` is an MCP server (Streamable HTTP, stateless) so ねこ can work the lights and fans by voice, through the Hermes `neko` profile. It lives here, not in `server/`, because neko-home already holds the MQTT connection and knows what each switch drives.

@@ -6,6 +6,7 @@ import { addAway, alarms, alarmsSince, aways, clearOverride, clearSiren, DAYS, t
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
 import { registerMcp } from "./mcp.ts";
 import { setRecording, startFrigate } from "./frigate.ts";
+import { climateDevices, readings, startClimate } from "./climate.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -270,11 +271,26 @@ app.get<{ Params: { id: number } }>(
   async (req) => events(req.params.id),
 );
 
+/** Devices with temperature/humidity history (see climate.ts). */
+app.get("/api/climate", async () => climateDevices());
+
+/** One device's temperature and humidity over the last `hours` (default 24), averaged so there are at most ~720 points. */
+app.get<{ Params: { device: string }; Querystring: { hours?: number } }>(
+  "/api/climate/:device",
+  { schema: { querystring: { type: "object", properties: { hours: { type: "integer", minimum: 1, maximum: 24 * 366 } } } } },
+  async (req) => {
+    const hours = req.query.hours ?? 24;
+    const span = hours * 3_600_000;
+    return { device: req.params.device, hours, items: readings(req.params.device, Date.now() - span, span / 720) };
+  },
+);
+
 /** ねこ's tools for the lights and fans, for the Hermes neko profile (see mcp.ts). */
 registerMcp(app);
 
 start(app.log);
 startFrigate(app.log);
+startClimate(app.log);
 // Frigate records only while the alarm is armed
 setRecording(status().armed);
 onAlarm((s) => setRecording(s.armed));
