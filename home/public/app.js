@@ -1173,6 +1173,13 @@ function bindDevices(){
     try{localStorage.setItem('devices-tab',devView.tab);}catch{}
     render();
   });
+  panel.querySelectorAll('[data-roomcard]').forEach(b=>b.onclick=()=>{
+    const k=b.dataset.roomcard, open=b.getAttribute('aria-expanded')==='true';
+    if(open&&devWords().length){devView.q='';devView.room=k;} // a search had every room open: keep this one, drop the search
+    else devView.room=open?null:k;
+    devView.open=null; edit.id=null; render();
+    requestAnimationFrame(()=>panel.querySelector(`[data-roomcard="${CSS.escape(k)}"]`)?.closest('.ctl-room')?.scrollIntoView({block:'nearest',behavior:'smooth'}));
+  });
   panel.querySelectorAll('.dev-row').forEach(b=>b.onclick=()=>{
     const id=b.dataset.dev, open=b.getAttribute('aria-expanded')==='true';
     if(open&&edit.busy)return; // a save is on its way
@@ -1208,7 +1215,8 @@ function bindDevices(){
 /* ---------- the Devices tab: two sections (sensors · switches and remotes), each grouped by room, with a search ----------
    A row per device with its reading; a row opens to the device's details and edit form. */
 const DEV_TABS={sensors:'Sensors',controls:'Switches & remotes'};
-const devView={tab:'sensors',q:'',open:null};
+// room: the room card open on Switches & remotes (a room id, or '_lost' for devices placed nowhere)
+const devView={tab:'sensors',q:'',open:null,room:null};
 try{const t=localStorage.getItem('devices-tab');if(DEV_TABS[t])devView.tab=t;}catch{}
 // a switch or remote: something the page can turn on and off (a wall switch's rockers, a plug's relay, a fan remote),
 // or a Zigbee remote that reports button presses as an `action`
@@ -1304,13 +1312,29 @@ function devicesHtml(){
       <div><b>${esc(r?r.name:'Not placed')}</b><span>${r?`${LVNAME[r.lv]} · `:'Give each a room, door or window · '}${n} ${grid?(n===1?'control':'controls'):(n===1?'device':'devices')}</span></div>
       ${statusHtml(ds)}</header>
     <ul class="${grid?'dev-grid':'dev-list'}">${its.sort(order).map(i=>i.fan?fanTileHtml(i):devRowHtml(i.d,i.d.id===openId,grid)).join('')}</ul></section>`;};
+  /* Switches & remotes: a grid of room cards; a card opens across the row to that room's switches, fans and remotes.
+     A search opens every room it matches, so what it finds is in view. */
+  const roomCardHtml=({r,its})=>{
+    const key=r?r.id:'_lost', open=!!words.length||devView.room===key;
+    const ds=[...new Set(its.map(i=>i.d))], n=its.length, up=ds.filter(d=>d.available!==false).length;
+    // what's on: fans count once, as themselves (not again under their remote)
+    const on=its.filter(i=>i.d.available!==false&&(i.fan?i.e.value===true:switchesOf(i.d.id).some(e=>e.component!=='fan'&&e.value===true))).length;
+    const st=up===ds.length?'up':'down';
+    return `<li class="ctl-room${open?' open':''}${r?'':' lost'}">
+    <button class="ctl-room-btn" data-roomcard="${esc(key)}" aria-expanded="${open}">
+      <span class="ico sm${on?' on':''}">${r?roomIcon(r):IMG('other')}</span>
+      <span class="dev-row-text"><b>${esc(r?r.name:'Not placed')}</b>
+        <small>${open&&r?`${LVNAME[r.lv]} · `:''}${n} ${n===1?'control':'controls'}${on?` · <span class="hot">${on} on</span>`:''}</small></span>
+      <span class="pip ${st}" title="${up===ds.length?'All online':`${up} of ${ds.length} online`}"></span>${open?'<span class="chev" aria-hidden="true"></span>':''}
+    </button>
+    ${open?`<ul class="dev-grid">${its.sort(order).map(i=>i.fan?fanTileHtml(i):devRowHtml(i.d,i.d.id===openId,true)).join('')}</ul>`:''}</li>`;};
   const tabs=`<div class="tabs" role="group" aria-label="Kind of device">${Object.entries(DEV_TABS).map(([t,name])=>
     `<button data-tab="${t}" aria-pressed="${t===devView.tab}">${name}<span class="count">${lists[t].length}</span></button>`).join('')}</div>`;
   let body;
   if(!all.length)body=`<p class="empty">${live.everConnected?'No devices yet.':'Connecting…'}</p>`;
   else if(!list.length)body=`<p class="empty">${words.length?`Nothing in ${DEV_TABS[devView.tab]} matches “${esc(devView.q.trim())}”.`:`No ${DEV_TABS[devView.tab].toLowerCase()} yet.`}
     ${lists[other].length&&words.length?` <button class="btn ghost inline" data-tab="${other}">${lists[other].length} in ${DEV_TABS[other]}</button>`:''}</p>`;
-  else body=groups.map(groupHtml).join('');
+  else body=grid?`<ul class="ctl-rooms">${groups.map(roomCardHtml).join('')}</ul>`:groups.map(groupHtml).join('');
   return `${headHtml('Devices',`${all.length} found through MQTT discovery`)}
     <div class="dev-tools">
       <input class="field" type="search" id="dev-q" value="${esc(devView.q)}" placeholder="Search by name, room, door or window" aria-label="Search devices" autocomplete="off" spellcheck="false">
@@ -1622,7 +1646,7 @@ function patchNode(a,b){
 }
 function renderPanel(){
   // keep keyboard focus across live re-renders
-  const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room||f.dataset?.sw||f.dataset?.tab||(f.classList.contains('dev-row')?f.dataset.dev:null)):null;
+  const f=document.activeElement, fid=f&&panel.contains(f)?(f.dataset?.id||f.dataset?.room||f.dataset?.sw||f.dataset?.tab||(f.classList.contains('dev-row')?f.dataset.dev:null)||f.dataset?.roomcard):null;
   // the device search: typing redraws the list under it, so put the caret back where it was
   const caret=f&&f.id==='dev-q'&&panel.contains(f)?[f.selectionStart,f.selectionEnd]:null;
   if(page==='alarm'||page==='settings'){
@@ -1646,7 +1670,7 @@ function renderPanel(){
   panel.querySelectorAll('.row').forEach(b=>b.onclick=()=>{const r=ROOM_BY_ID[b.dataset.id];select(r===sel?null:r);});
   panel.querySelectorAll('.mini[data-room]').forEach(b=>b.onclick=()=>select(ROOM_BY_ID[b.dataset.room]));
   if(caret){const i=panel.querySelector('#dev-q');if(i){i.focus();i.setSelectionRange(...caret);}}
-  else if(fid)panel.querySelector(`[data-id="${CSS.escape(fid)}"],[data-room="${CSS.escape(fid)}"],[data-sw="${CSS.escape(fid)}"],.tabs [data-tab="${CSS.escape(fid)}"],.dev-row[data-dev="${CSS.escape(fid)}"]`)?.focus();
+  else if(fid)panel.querySelector(`[data-id="${CSS.escape(fid)}"],[data-room="${CSS.escape(fid)}"],[data-sw="${CSS.escape(fid)}"],.tabs [data-tab="${CSS.escape(fid)}"],.dev-row[data-dev="${CSS.escape(fid)}"],[data-roomcard="${CSS.escape(fid)}"]`)?.focus();
 }
 
 /* ---------- the selected room card ---------- */

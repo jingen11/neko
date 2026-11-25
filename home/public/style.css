@@ -423,7 +423,7 @@ button.tool:active img{transform:scale(.88)}
 /* a fan: across the row, its speeds under it */
 .fan-tile{grid-column:1/-1;display:flex;flex-direction:column;gap:10px;padding:10px}
 .fan-top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center}
-.fan-tile .speeds{display:grid;grid-template-columns:repeat(auto-fit,minmax(32px,1fr));gap:6px}
+.fan-tile .speeds{display:grid;grid-template-columns:repeat(auto-fit,minmax(26px,1fr));gap:5px}
 .fan-tile .spd{min-width:0;min-height:40px;padding:0}
 /* a fan's speeds in a device's details: a row of their own across both columns (the switch names make the value column narrow) */
 .facts dd.sw-speeds{grid-column:1/-1}
@@ -432,3 +432,20 @@ button.tool:active img{transform:scale(.88)}
 /* long switch names ("Master bedroom fan switch") wrap instead of crushing the values to a word per line */
 .dev-detail .facts{grid-template-columns:fit-content(45%) minmax(0,1fr)}
 .facts dd.sw-fact>span{overflow-wrap:normal}
+
+/* Switches & remotes: room cards in a grid; an open card spans the row and holds the room's tiles */
+.ctl-rooms{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.ctl-room{background:rgb(255 255 255 / .72);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+.ctl-room.lost{border-color:var(--warm)}
+.ctl-room.open{grid-column:1/-1;background:#fff;border-color:transparent;box-shadow:var(--glow)}
+.ctl-room-btn{width:100%;height:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"ico pip" "txt txt";gap:8px;align-items:start;
+  padding:10px 12px 12px 10px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.ctl-room-btn:hover{background:#fff}
+.ctl-room-btn:focus-visible{outline:none;box-shadow:inset var(--glow)}
+.ctl-room-btn>.ico{grid-area:ico}
+.ctl-room-btn>.pip{grid-area:pip;margin-top:4px}
+.ctl-room-btn>.dev-row-text{grid-area:txt}
+.ctl-room-btn>.dev-row-text b{white-space:normal;line-height:1.3}
+.ctl-room.open .ctl-room-btn{height:auto;grid-template-columns:auto minmax(0,1fr) auto auto;grid-template-areas:"ico txt pip chev";align-items:center}
+.ctl-room.open .ctl-room-btn>.chev{grid-area:chev;transform:rotate(-135deg);margin:4px 4px 0 0}
+.ctl-room.open>.dev-grid{padding:0 10px 10px}
