@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { type Entity, entity, subscribe, type Update } from "./broker.ts";
+import { type Entity, entity, isWeatherDevice, subscribe, type Update } from "./broker.ts";
 import { config, layout } from "./config.ts";
 import { notifyAlarm } from "./notify.ts";
 import { keepSounding, silence } from "./siren.ts";
@@ -18,7 +18,7 @@ import { keepSounding, silence } from "./siren.ts";
  * (e.g. disarm at 23:30 inside a 23:00-07:00 period -> stays disarmed until 07:00, then follows the schedule).
  *
  * Each armed stretch is a session; while one is open, every live sensor change and every board going
- * online/offline is written to alarm_events. Each alarm among them sends a notification, and one that isn't a low battery or tamper starts the siren.
+ * online/offline is written to alarm_events, except a rain sensor's. Each alarm among them sends a notification, and one that isn't a low battery or tamper starts the siren.
  * The siren sounds until it is cleared (clearSiren: it stops, the alarm stays armed, and the next alarm sounds it again)
  * or the alarm is disarmed. Retained values replayed on (re)connect are skipped:
  * they are old readings, not something that happened while armed.
@@ -367,6 +367,9 @@ const availLogged = new Map<string, number>();
 
 function record(u: Update) {
   if (!current) return;
+  // a rain sensor (its rain flag, cleaning reminder, going offline) says nothing about intruders: not logged, never an alarm
+  const deviceId = u.type === "entity" ? u.entity.device : u.type === "device" ? u.device.id : null;
+  if (deviceId && isWeatherDevice(deviceId)) return;
   if (u.type === "entity") {
     const e = u.entity;
     if (e.at === null) return; // retained replay, not a live change

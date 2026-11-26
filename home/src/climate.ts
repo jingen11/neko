@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { device, snapshot } from "./broker.ts";
+import { device, isRainFlag, snapshot } from "./broker.ts";
 import { config } from "./config.ts";
 
 /**
@@ -68,12 +68,11 @@ function current() {
   return out;
 }
 
-/** rain sensors' raining-or-not flags: a binary sensor whose object id is `rain` (Zigbee2MQTT) or of class moisture named rain */
+/** rain sensors' raining-or-not flags */
 function currentRain() {
   const out = new Map<string, boolean>();
   for (const e of snapshot().entities) {
-    if (e.component !== "binary_sensor" || e.diagnostic) continue;
-    if (!(e.id.endsWith("/rain") || /^rain$/i.test(e.name ?? ""))) continue;
+    if (!isRainFlag(e)) continue;
     if (typeof e.value === "boolean") out.set(e.device, e.value);
   }
   return out;

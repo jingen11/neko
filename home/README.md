@@ -75,7 +75,7 @@ Arming or disarming by hand overrides the schedule until the schedule itself nex
 
 On the dashboard, the **Alarm** tab shows the state, arm/disarm, a **Clear siren** button while the siren sounds, and the alarms: someone detected, a door or window opening, or a board going offline while armed, newest first by day. The **Settings** tab holds the periods, drawn as a week, and the away days.
 
-Each armed stretch is a session (`alarm_sessions`). While one is open, every live sensor change and every board going online or offline is written to `alarm_events`, with the device's room or opening. Retained values replayed on reconnect aren't logged.
+Each armed stretch is a session (`alarm_sessions`). While one is open, every live sensor change and every board going online or offline is written to `alarm_events`, with the device's room or opening. Retained values replayed on reconnect aren't logged. A rain sensor (a device with a `rain` flag) is left out altogether: rain starting, its cleaning reminder or it going offline is never logged or an alarm.
 
 On a presence board with an `Intruder` sensor (PIR and mmWave agreeing, see `sensors/`), only `Intruder` turning on is an alarm; its `Occupied` and `PIR` are still logged, since either alone is easily fooled by a fan, a curtain or heat. Each event is flagged as an alarm or not when it is written (`alarm_events.alarm`); events from before the flag keep the old rule.
 
