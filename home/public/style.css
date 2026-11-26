@@ -353,6 +353,12 @@ button.tool:active img{transform:scale(.88)}
   .logo{width:40px;height:40px}
   .rail-nav{flex-direction:row;margin-left:auto}
   .link{margin:0}
+}
+@media (max-width:420px){
+  /* six rail buttons and the logo across a phone */
+  .rail{gap:8px}
+  .rail-nav{gap:2px}
+  .rail-btn{width:40px;height:40px}
   .stage{position:relative;order:2;height:64vh;min-height:400px}
   .hud{position:relative;order:3;inset:auto;width:auto;margin:12px;overflow:visible}
   .seg{top:12px;right:12px}

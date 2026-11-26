@@ -105,7 +105,7 @@ curl -X POST  localhost:8090/api/switches/rf-remote/living_room_fan -H 'content-
 
 Every minute, on the minute, `src/climate.ts` saves the latest temperature and humidity of each device that has them to `climate_readings` in `data/home.db`: one row per device per minute (`device`, `at` in ms, `temperature` °C, `humidity` %). Diagnostic sensors, such as a switch's own chip temperature, aren't recorded. Zigbee sensors only report when a value changes, so a row repeats the last reading until the next one arrives. Nothing is saved while a device is offline or the broker is down, so a gap means "unknown". Today that's the porch sensor (`porch_sensor`); a new sensor is picked up without code changes.
 
-The **Overview** tab charts each one, temperature and humidity separately, over 24 h, 7 days or 30 days, refreshed each minute. Hover a chart to read a value.
+The **Climate** tab (thermometer on the rail) charts each one, temperature and humidity separately, over 24 h, 7 days or 30 days (one switch for every chart), refreshed each minute while the tab is open. Hover a chart to read a value.
 
 A rain sensor's raining-or-not flag (a `binary_sensor` with object id `rain`, e.g. Zigbee2MQTT's `rain_sensor`) is saved the same way, each minute, to `rain_readings` (`device`, `at`, `rain` 1/0). The climate charts shade the times it rained in light blue, with a **Rain** key above the chart when there's any, the card's headline adds **Raining** or **Dry**, and the hover tip says which. Over 7 or 30 days a bucket is shaded if it rained at any point in it.
 

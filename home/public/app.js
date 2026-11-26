@@ -1071,7 +1071,6 @@ function overviewHtml(){
     </article>
     ${openingsHtml(ops,hot)}
     ${appliancesHtml()}
-    ${climateHtml()}
     <h2 class="section">Rooms with sensors</h2>
     ${rooms.length?`<ul class="rows">${rows}</ul>`:`<p class="empty">${live.everConnected?'No room has a sensor yet.':'Connecting…'}</p>`}
     ${lost.length?`<p class="empty">Not placed: ${lost.map(d=>`<b>${esc(d.label)}</b>${d.room||d.opening?` (no “${esc(d.room||d.opening)}”)`:''}`).join(', ')}. Give ${lost.length===1?'it':'each'} a <code>room</code> or <code>opening</code> in <code>layout.json</code> and restart the server.</p>`:''}`;
@@ -1130,9 +1129,9 @@ async function loadClimate(){
       clim.data.set(id,{hours:clim.hours,items:r.ok?(await r.json()).items:clim.data.get(id)?.items||[]});
     })]);
   }catch{} finally{clim.loading=false;}
-  if(page==='overview')renderPanel();
+  if(page==='climate')renderPanel();
 }
-setInterval(()=>{if(page==='overview'&&!document.hidden)loadClimate();},60_000);
+setInterval(()=>{if(page==='climate'&&!document.hidden)loadClimate();},60_000);
 const CW=340,CH=118,CL=34,CR=8,CT=8,CB=20; // chart box and its margins (viewBox units)
 function climTicks(lo,hi){
   const span=hi-lo||1, step=[.5,1,2,5,10,20].find(s=>span/s<=4)||50;
@@ -1181,12 +1180,16 @@ function climChart(id,key,label,unit,color,items,from,to){
     </svg><div class="clim-tip mono" hidden></div></div></div>`;
 }
 const fmt1=v=>(Math.round(v*10)/10).toFixed(1);
+/** the Climate tab: one card per sensor, under one time-range switch */
 function climateHtml(){
   const ds=climateDevices();
-  if(!ds.length)return '';
+  const head=headHtml('Climate','Temperature, humidity and rain');
+  if(!ds.length)return `${head}<p class="empty">${live.everConnected?'No temperature or humidity sensor yet. Pair one in Zigbee2MQTT and it shows up here.':'Connecting…'}</p>`;
   if(!clim.loading&&ds.some(d=>clim.data.get(d.id)?.hours!==clim.hours))setTimeout(loadClimate);
   const to=Date.now(),from=to-clim.hours*3_600_000;
-  return ds.map(d=>{
+  return `${head}
+    <div class="tabs clim-tabs" role="group" aria-label="Time range">${Object.entries(CLIM_RANGES).map(([k,n])=>`<button data-crange="${k}" aria-pressed="${Number(k)===clim.hours}">${n}</button>`).join('')}</div>
+    ${ds.map(d=>{
     const es=entitiesOf(d.id),t=es.find(e=>e.deviceClass==='temperature'&&!e.diagnostic),h=es.find(e=>e.deviceClass==='humidity'&&!e.diagnostic);
     const items=clim.data.get(d.id)?.hours===clim.hours?clim.data.get(d.id).items:[];
     const room=ROOM_BY_ID[d.room]?.name;
@@ -1196,10 +1199,9 @@ function climateHtml(){
     return `<article class="panel-card">
       <div class="card-head"><div><span class="label">${esc(room?`${room} climate`:d.label)}</span><strong class="big">${now}</strong>
         ${d.available===false?'<p class="note">Sensor offline: nothing is recorded until it\'s back.</p>':''}</div></div>
-      <div class="tabs clim-tabs" role="group" aria-label="Time range">${Object.entries(CLIM_RANGES).map(([k,n])=>`<button data-crange="${k}" aria-pressed="${Number(k)===clim.hours}">${n}</button>`).join('')}</div>
       ${t?climChart(d.id,'temperature','Temperature','°C','var(--warm)',items,from,to):''}
       ${h?climChart(d.id,'humidity','Humidity','%','var(--accent)',items,from,to):''}
-    </article>`;}).join('');
+    </article>`;}).join('')}`;
 }
 // range buttons and the hover crosshair, delegated so they survive the panel's live redraws
 panel.addEventListener('click',ev=>{
@@ -1804,7 +1806,7 @@ function renderPanel(){
   }
   // the device form: don't redraw under the caret or an open dropdown (its values are kept in `edit`)
   if(page==='devices'&&edit.id&&!edit.busy&&f&&panel.contains(f)&&f.closest('.dev-edit')&&f.matches('input,select'))return;
-  const html=page==='devices'?devicesHtml():overviewHtml();
+  const html=page==='devices'?devicesHtml():page==='climate'?climateHtml():overviewHtml();
   if(panel._html===html)return;
   panel._html=html; morph(panel,html);
   if(page==='devices')bindDevices();
@@ -1956,7 +1958,7 @@ document.getElementById('reset').onclick=()=>{sel=null;const p=PRESET[view];flyT
 function goPage(p){
   page=p;
   if(p==='alarm'||p==='settings')loadAlarm();
-  if(p==='overview')loadClimate();
+  if(p==='climate')loadClimate();
   document.querySelectorAll('button.rail-btn').forEach(x=>x.dataset.page===p?x.setAttribute('aria-current','page'):x.removeAttribute('aria-current'));
   panel.scrollTop=0; render();
 }
