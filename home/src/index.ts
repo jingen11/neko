@@ -2,11 +2,11 @@ import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { command, device, entity, place, setSpeed, snapshot, start, subscribe } from "./broker.ts";
 import { isOpening, isRoom, openings, rooms } from "./areas.ts";
-import { addAway, alarms, alarmsSince, aways, clearOverride, clearSiren, DAYS, type Day, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setPeriods, status } from "./alarm.ts";
+import { addAway, alarmDevices, alarms, alarmsSince, aways, clearOverride, clearSiren, DAYS, type Day, events, isDate, isTime, onAlarm, periods, removeAway, sessions, setArmed, setDeviceArmed, setPeriods, status } from "./alarm.ts";
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
 import { registerMcp } from "./mcp.ts";
 import { setRecording, startFrigate } from "./frigate.ts";
-import { climateDevices, readings, startClimate } from "./climate.ts";
+import { climateDevices, rainReadings, readings, startClimate } from "./climate.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -166,7 +166,7 @@ app.post<{ Params: { node: string; object: string }; Body: { on?: boolean; speed
 );
 
 /** The alarm now, plus its schedule. */
-app.get("/api/alarm", async () => ({ ...status(), periods: periods(), away: aways() }));
+app.get("/api/alarm", async () => ({ ...status(), periods: periods(), away: aways(), devices: alarmDevices() }));
 
 /** Arm or disarm by hand: {"armed": true|false}. Holds until the schedule next changes. */
 app.post<{ Body: { armed: boolean } }>(
@@ -211,6 +211,14 @@ app.put<{ Body: { start: string; end: string; days?: Day[] }[] }>(
     if (bad) return reply.code(400).send({ error: `bad period ${bad.start}-${bad.end}: times are HH:MM and start differs from end` });
     return setPeriods(req.body);
   },
+);
+
+/** Which sensors the alarm watches: [{"device":"rain_sensor","armed":false}, ...]. Every device is watched unless left out. */
+app.get("/api/alarm/devices", async () => alarmDevices());
+app.put<{ Params: { device: string }; Body: { armed: boolean } }>(
+  "/api/alarm/devices/:device",
+  { schema: { body: { type: "object", required: ["armed"], properties: { armed: { type: "boolean" } }, additionalProperties: false } } },
+  async (req) => setDeviceArmed(req.params.device, req.body.armed),
 );
 
 /** Days away from home, armed all day: {"from":"2026-12-20","to":"2026-12-27","note":"KL trip"} (dates inclusive). */
@@ -282,6 +290,18 @@ app.get<{ Params: { device: string }; Querystring: { hours?: number } }>(
     const hours = req.query.hours ?? 24;
     const span = hours * 3_600_000;
     return { device: req.params.device, hours, items: readings(req.params.device, Date.now() - span, span / 720) };
+  },
+);
+
+/** Raining or not over the last `hours` (default 24), from every rain sensor, in the same buckets as the climate charts. */
+app.get<{ Querystring: { hours?: number } }>(
+  "/api/rain",
+  { schema: { querystring: { type: "object", properties: { hours: { type: "integer", minimum: 1, maximum: 24 * 366 } } } } },
+  async (req) => {
+    const hours = req.query.hours ?? 24;
+    const span = hours * 3_600_000;
+    const bucket = Math.max(60_000, Math.round(span / 720 / 60_000) * 60_000);
+    return { hours, bucket, items: rainReadings(Date.now() - span, bucket) };
   },
 );
 

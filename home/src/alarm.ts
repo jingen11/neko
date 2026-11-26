@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { type Entity, entity, subscribe, type Update } from "./broker.ts";
+import { type Entity, entity, snapshot, subscribe, type Update } from "./broker.ts";
 import { config, layout } from "./config.ts";
 import { notifyAlarm } from "./notify.ts";
 import { keepSounding, silence } from "./siren.ts";
@@ -18,7 +18,7 @@ import { keepSounding, silence } from "./siren.ts";
  * (e.g. disarm at 23:30 inside a 23:00-07:00 period -> stays disarmed until 07:00, then follows the schedule).
  *
  * Each armed stretch is a session; while one is open, every live sensor change and every board going
- * online/offline is written to alarm_events. Each alarm among them sends a notification, and one that isn't a low battery or tamper starts the siren.
+ * online/offline is written to alarm_events, except from sensors left out of the alarm (alarm_devices). Each alarm among them sends a notification, and one that isn't a low battery or tamper starts the siren.
  * The siren sounds until it is cleared (clearSiren: it stops, the alarm stays armed, and the next alarm sounds it again)
  * or the alarm is disarmed. Retained values replayed on (re)connect are skipped:
  * they are old readings, not something that happened while armed.
@@ -68,6 +68,11 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS alarm_events_session ON alarm_events(session_id, at);
   CREATE INDEX IF NOT EXISTS alarm_events_at ON alarm_events(at);
+  -- sensors left out of the alarm; a device with no row is armed
+  CREATE TABLE IF NOT EXISTS alarm_devices (
+    device TEXT PRIMARY KEY,           -- e.g. rain_sensor
+    armed  INTEGER NOT NULL            -- 0 = left out
+  ) WITHOUT ROWID;
 `);
 // databases from before periods had days: their periods ran every day, and still do
 if (!(db.prepare("PRAGMA table_info(alarm_periods)").all() as { name: string }[]).some((c) => c.name === "days")) {
@@ -362,11 +367,40 @@ function soundsSiren(e: Entity): boolean {
   return !e.diagnostic && e.deviceClass !== "battery" && e.deviceClass !== "tamper";
 }
 
+// ---- which sensors the alarm watches ----
+
+const qDevices = db.prepare("SELECT device, armed FROM alarm_devices");
+const qSetDevice = db.prepare("INSERT INTO alarm_devices (device, armed) VALUES (?, ?) ON CONFLICT (device) DO UPDATE SET armed = excluded.armed");
+const qResetDevice = db.prepare("DELETE FROM alarm_devices WHERE device = ?");
+/** devices left out of the alarm, cached: record() checks on every reading */
+let leftOut = new Set((qDevices.all() as { device: string; armed: number }[]).filter((r) => !r.armed).map((r) => r.device));
+
+export function deviceArmed(id: string): boolean {
+  return !leftOut.has(id);
+}
+
+/** Every known device and whether the alarm watches it. */
+export function alarmDevices(): { device: string; armed: boolean }[] {
+  const ids = new Set([...snapshot().devices.map((d) => d.id), ...leftOut]);
+  return [...ids].sort().map((device) => ({ device, armed: deviceArmed(device) }));
+}
+
+/** Watch a device (the default) or leave it out of the alarm. */
+export function setDeviceArmed(id: string, armed: boolean) {
+  if (armed) qResetDevice.run(id);
+  else qSetDevice.run(id, 0);
+  leftOut = new Set((qDevices.all() as { device: string; armed: number }[]).filter((r) => !r.armed).map((r) => r.device));
+  return alarmDevices();
+}
+
 /** availableAt of the last online/offline flip logged per device */
 const availLogged = new Map<string, number>();
 
 function record(u: Update) {
   if (!current) return;
+  // a sensor left out of the alarm (e.g. a rain sensor) is not logged and never alarms
+  const deviceId = u.type === "entity" ? u.entity.device : u.type === "device" ? u.device.id : null;
+  if (deviceId && !deviceArmed(deviceId)) return;
   if (u.type === "entity") {
     const e = u.entity;
     if (e.at === null) return; // retained replay, not a live change
