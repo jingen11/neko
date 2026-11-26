@@ -5,7 +5,7 @@ import { device, snapshot } from "./broker.ts";
 import { config } from "./config.ts";
 
 /**
- * Temperature and humidity history, in home.db.
+ * Temperature, humidity and rain history, in home.db.
  *
  * Once a minute, on the minute, every device with a temperature or humidity sensor (not a diagnostic one:
  * a switch's own chip temperature doesn't count) gets one row with its latest values. Zigbee sensors only
@@ -25,6 +25,12 @@ db.exec(`
     humidity    REAL,                  -- % relative humidity; likewise
     PRIMARY KEY (device, at)
   ) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS rain_readings (
+    device TEXT NOT NULL,              -- e.g. rain_sensor
+    at     INTEGER NOT NULL,           -- ms since epoch, on the minute
+    rain   INTEGER NOT NULL,           -- 1 raining, 0 dry
+    PRIMARY KEY (device, at)
+  ) WITHOUT ROWID;
 `);
 
 const MINUTE = 60_000;
@@ -33,6 +39,14 @@ const qInsert = db.prepare("INSERT OR IGNORE INTO climate_readings (device, at, 
 const qRange = db.prepare(`
   SELECT (at / CAST(?1 AS INTEGER)) * CAST(?1 AS INTEGER) AS t, AVG(temperature) AS temperature, AVG(humidity) AS humidity
   FROM climate_readings WHERE device = ?2 AND at >= ?3
+  GROUP BY at / CAST(?1 AS INTEGER) ORDER BY t
+`);
+
+const qRainInsert = db.prepare("INSERT OR IGNORE INTO rain_readings (device, at, rain) VALUES (?, ?, ?)");
+// any rain sensor raining in a bucket marks the bucket; `rain` is the share of its minutes that were wet
+const qRainRange = db.prepare(`
+  SELECT (at / CAST(?1 AS INTEGER)) * CAST(?1 AS INTEGER) AS t, AVG(rain) AS rain
+  FROM (SELECT at, MAX(rain) AS rain FROM rain_readings WHERE at >= ?2 GROUP BY at)
   GROUP BY at / CAST(?1 AS INTEGER) ORDER BY t
 `);
 
@@ -54,12 +68,27 @@ function current() {
   return out;
 }
 
+/** rain sensors' raining-or-not flags: a binary sensor whose object id is `rain` (Zigbee2MQTT) or of class moisture named rain */
+function currentRain() {
+  const out = new Map<string, boolean>();
+  for (const e of snapshot().entities) {
+    if (e.component !== "binary_sensor" || e.diagnostic) continue;
+    if (!(e.id.endsWith("/rain") || /^rain$/i.test(e.name ?? ""))) continue;
+    if (typeof e.value === "boolean") out.set(e.device, e.value);
+  }
+  return out;
+}
+
 function sample(at: number) {
   if (!snapshot().connected) return;
   for (const [id, r] of current()) {
     if (device(id)?.available === false) continue;
     if (r.temperature === null && r.humidity === null) continue;
     qInsert.run(id, at, r.temperature, r.humidity);
+  }
+  for (const [id, raining] of currentRain()) {
+    if (device(id)?.available === false) continue;
+    qRainInsert.run(id, at, raining ? 1 : 0);
   }
 }
 
@@ -70,6 +99,20 @@ export function readings(deviceId: string, since: number, bucket = MINUTE): Clim
     at: Number(r.t),
     temperature: r.temperature === null ? null : Math.round(Number(r.temperature) * 100) / 100,
     humidity: r.humidity === null ? null : Math.round(Number(r.humidity) * 100) / 100,
+  }));
+}
+
+export interface RainReading {
+  at: number;
+  rain: number; // share of the bucket's recorded minutes that were raining, 0..1
+}
+
+/** Whether it rained, from every rain sensor, since `since`, in buckets of `bucket` ms. Minutes with no reading are left out. */
+export function rainReadings(since: number, bucket = MINUTE): RainReading[] {
+  const b = Math.max(MINUTE, Math.round(bucket / MINUTE) * MINUTE);
+  return (qRainRange.all(b, since) as Record<string, number>[]).map((r) => ({
+    at: Number(r.t),
+    rain: Math.round(Number(r.rain) * 100) / 100,
   }));
 }
 

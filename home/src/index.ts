@@ -6,7 +6,7 @@ import { addAway, alarms, alarmsSince, aways, clearOverride, clearSiren, DAYS, t
 import { config, layout, LOAD_KINDS, saveLayout, type Load } from "./config.ts";
 import { registerMcp } from "./mcp.ts";
 import { setRecording, startFrigate } from "./frigate.ts";
-import { climateDevices, readings, startClimate } from "./climate.ts";
+import { climateDevices, rainReadings, readings, startClimate } from "./climate.ts";
 
 const app = Fastify({ logger: { level: "info" } });
 
@@ -282,6 +282,18 @@ app.get<{ Params: { device: string }; Querystring: { hours?: number } }>(
     const hours = req.query.hours ?? 24;
     const span = hours * 3_600_000;
     return { device: req.params.device, hours, items: readings(req.params.device, Date.now() - span, span / 720) };
+  },
+);
+
+/** Raining or not over the last `hours` (default 24), from every rain sensor, in the same buckets as the climate charts. */
+app.get<{ Querystring: { hours?: number } }>(
+  "/api/rain",
+  { schema: { querystring: { type: "object", properties: { hours: { type: "integer", minimum: 1, maximum: 24 * 366 } } } } },
+  async (req) => {
+    const hours = req.query.hours ?? 24;
+    const span = hours * 3_600_000;
+    const bucket = Math.max(60_000, Math.round(span / 720 / 60_000) * 60_000);
+    return { hours, bucket, items: rainReadings(Date.now() - span, bucket) };
   },
 );
 

@@ -1110,8 +1110,10 @@ function appliancesHtml(){
 /* ---------- temperature & humidity history (recorded every minute by the server, climate.ts) ----------
    Two small charts per sensor, one per measure (different units, so never one shared axis). */
 const CLIM_RANGES={24:'24 h',168:'7 days',720:'30 days'};
-const clim={hours:24,data:new Map(),loading:false};
+const clim={hours:24,data:new Map(),rain:null,loading:false};
 try{const h=Number(localStorage.getItem('climate-hours'));if(CLIM_RANGES[h])clim.hours=h;}catch{}
+/** the rain sensors' raining-or-not flags (Zigbee2MQTT's `rain` binary sensor), live */
+const rainEntities=()=>[...live.entities.values()].filter(e=>e.component==='binary_sensor'&&!e.diagnostic&&(e.id.endsWith('/rain')||/^rain$/i.test(e.name||'')));
 /** devices with a (non-diagnostic) temperature or humidity sensor, live */
 function climateDevices(){
   const ids=new Set([...live.entities.values()].filter(e=>!e.diagnostic&&(e.deviceClass==='temperature'||e.deviceClass==='humidity')).map(e=>e.device));
@@ -1120,12 +1122,13 @@ function climateDevices(){
 async function loadClimate(){
   if(clim.loading)return; clim.loading=true;
   try{
-    const ids=climateDevices().map(d=>d.id);
-    await Promise.all(ids.map(async id=>{
+    const ids=climateDevices().map(d=>d.id),hours=clim.hours;
+    const rain=rainEntities().length?fetch(`api/rain?hours=${hours}`).then(r=>r.ok?r.json():null).then(j=>{if(j)clim.rain={hours,bucket:j.bucket,items:j.items};}).catch(()=>{}):null;
+    await Promise.all([rain,...ids.map(async id=>{
       const r=await fetch(`api/climate/${encodeURIComponent(id)}?hours=${clim.hours}`);
       // a failed load keeps what was shown (or nothing), and is retried on the next minute's refresh
       clim.data.set(id,{hours:clim.hours,items:r.ok?(await r.json()).items:clim.data.get(id)?.items||[]});
-    }));
+    })]);
   }catch{} finally{clim.loading=false;}
   if(page==='overview')renderPanel();
 }
@@ -1137,6 +1140,18 @@ function climTicks(lo,hi){
   for(let v=a;v<=b+1e-9;v+=step)t.push(+v.toFixed(2));
   return t;
 }
+/** spans of time it rained, merged from the rain buckets: [[start,end],...] */
+function rainSpans(from,to){
+  const r=clim.rain; if(!r||r.hours!==clim.hours)return [];
+  const out=[];
+  for(const b of r.items){
+    if(!(b.rain>0))continue;
+    const s=Math.max(b.at,from),e=Math.min(b.at+r.bucket,to); if(e<=s)continue;
+    const last=out.at(-1); if(last&&s<=last[1])last[1]=Math.max(last[1],e); else out.push([s,e]);
+  }
+  return out;
+}
+const rainAt=t=>{const r=clim.rain;if(!r||r.hours!==clim.hours)return null;const b=r.items.find(i=>t>=i.at&&t<i.at+r.bucket);return b?b.rain>0:null;};
 function climChart(id,key,label,unit,color,items,from,to){
   const pts=items.filter(r=>typeof r[key]==='number');
   const head=`<div class="clim-head"><span class="label">${label}</span>`;
@@ -1151,9 +1166,13 @@ function climChart(id,key,label,unit,color,items,from,to){
   const fmtT=t=>{const dt=new Date(t);return clim.hours<=24?dt.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):dt.toLocaleDateString(undefined,{day:'numeric',month:'short'});};
   const xs=[from,(from+to)/2,to];
   const last=pts.at(-1);
-  return `<div class="clim">${head}<span class="clim-range mono">${fmt1(lo)}–${fmt1(hi)} ${unit}</span></div>
+  const rain=rainSpans(from,to);
+  const rainBands=rain.map(([s,e])=>{const x1=X(s),w=Math.max(1.5,X(e)-x1);return `<rect class="clim-rain" x="${x1.toFixed(1)}" y="${CT}" width="${w.toFixed(1)}" height="${CH-CT-CB}"/>`;}).join('');
+  const rainKey=rain.length?`<span class="clim-rain-key"><i></i>Rain</span>`:'';
+  return `<div class="clim">${head}${rainKey}<span class="clim-range mono">${fmt1(lo)}–${fmt1(hi)} ${unit}</span></div>
     <div class="clim-plot" data-clim="${esc(id)}" data-key="${key}" data-unit="${esc(unit)}" data-from="${from}" data-to="${to}" data-y0="${y0}" data-y1="${y1}">
-    <svg viewBox="0 0 ${CW} ${CH}" role="img" aria-label="${esc(label)} over the last ${CLIM_RANGES[clim.hours]}: from ${fmt1(lo)} to ${fmt1(hi)} ${esc(unit)}, now ${fmt1(last[key])} ${esc(unit)}">
+    <svg viewBox="0 0 ${CW} ${CH}" role="img" aria-label="${esc(label)} over the last ${CLIM_RANGES[clim.hours]}: from ${fmt1(lo)} to ${fmt1(hi)} ${esc(unit)}, now ${fmt1(last[key])} ${esc(unit)}${rain.length?`; rained in ${rain.length} spell${rain.length>1?'s':''}`:''}">
+      ${rainBands}
       ${ticks.map(v=>`<line class="clim-grid" x1="${CL}" x2="${CW-CR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text class="clim-ax" x="${CL-6}" y="${(Y(v)+3.5).toFixed(1)}" text-anchor="end">${fmt1(v)}</text>`).join('')}
       ${xs.map((t,i)=>`<text class="clim-ax" x="${X(t).toFixed(1)}" y="${CH-4}" text-anchor="${['start','middle','end'][i]}">${fmtT(t)}</text>`).join('')}
       <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
@@ -1171,7 +1190,9 @@ function climateHtml(){
     const es=entitiesOf(d.id),t=es.find(e=>e.deviceClass==='temperature'&&!e.diagnostic),h=es.find(e=>e.deviceClass==='humidity'&&!e.diagnostic);
     const items=clim.data.get(d.id)?.hours===clim.hours?clim.data.get(d.id).items:[];
     const room=ROOM_BY_ID[d.room]?.name;
-    const now=[typeof t?.value==='number'?`${fmt1(t.value)} °C`:null,typeof h?.value==='number'?`${Math.round(h.value)}% RH`:null].filter(Boolean).join(' · ')||'—';
+    const rainNow=rainEntities().filter(e=>live.devices.get(e.device)?.available!==false&&typeof e.value==='boolean');
+    const wet=rainNow.length?(rainNow.some(e=>e.value)?'Raining':'Dry'):null;
+    const now=[typeof t?.value==='number'?`${fmt1(t.value)} °C`:null,typeof h?.value==='number'?`${Math.round(h.value)}% RH`:null,wet].filter(Boolean).join(' · ')||'—';
     return `<article class="panel-card">
       <div class="card-head"><div><span class="label">${esc(room?`${room} climate`:d.label)}</span><strong class="big">${now}</strong>
         ${d.available===false?'<p class="note">Sensor offline: nothing is recorded until it\'s back.</p>':''}</div></div>
@@ -1200,7 +1221,8 @@ function climHover(ev){
   g.hidden=false; g.querySelector('line').setAttribute('x1',x);g.querySelector('line').setAttribute('x2',x);
   g.querySelector('circle').setAttribute('cx',x);g.querySelector('circle').setAttribute('cy',y);
   const when=new Date(best.at).toLocaleString(undefined,{weekday:'short',hour:'2-digit',minute:'2-digit'});
-  tip.hidden=false; tip.innerHTML=`<b>${fmt1(best[key])} ${esc(unit)}</b> ${esc(when)}`;
+  const wet=rainAt(best.at);
+  tip.hidden=false; tip.innerHTML=`<b>${fmt1(best[key])} ${esc(unit)}</b> ${esc(when)}${wet===null?'':wet?' · raining':' · dry'}`;
   const px=x/CW*box.width; tip.style.left=`${Math.min(Math.max(px,60),box.width-60)}px`;
 }
 panel.addEventListener('pointermove',climHover);

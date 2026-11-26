@@ -100,9 +100,12 @@ Every minute, on the minute, `src/climate.ts` saves the latest temperature and h
 
 The **Overview** tab charts each one, temperature and humidity separately, over 24 h, 7 days or 30 days, refreshed each minute. Hover a chart to read a value.
 
+A rain sensor's raining-or-not flag (a `binary_sensor` with object id `rain`, e.g. Zigbee2MQTT's `rain_sensor`) is saved the same way, each minute, to `rain_readings` (`device`, `at`, `rain` 1/0). The climate charts shade the times it rained in light blue, with a **Rain** key above the chart when there's any, the card's headline adds **Raining** or **Dry**, and the hover tip says which. Over 7 or 30 days a bucket is shaded if it rained at any point in it.
+
 ```bash
 curl localhost:8090/api/climate                          # devices with history
 curl 'localhost:8090/api/climate/porch_sensor?hours=24'  # averaged to at most ~720 points
+curl 'localhost:8090/api/rain?hours=24'                  # rain share per bucket, from every rain sensor
 sqlite3 data/home.db "SELECT datetime(at/1000,'unixepoch','localtime'), temperature, humidity FROM climate_readings WHERE device='porch_sensor' ORDER BY at DESC LIMIT 10"
 ```
 
