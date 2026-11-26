@@ -155,6 +155,9 @@ button.mini:hover span{color:var(--accent)}
 .btn.primary:hover{color:#fff;background:#0574e6}
 .btn.ghost{border-color:transparent;background:none;color:var(--muted);padding:0 10px}
 .btn.ghost:hover{color:var(--accent);background:var(--glass-hi)}
+.arm-dev span{display:flex;flex-direction:column;gap:1px}
+.arm-dev .arm-name{font:500 14px var(--f-body);color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+.arm-dev small{font-size:12px;color:var(--muted)}
 .mini .btn.ghost{min-height:36px;margin:-4px -10px -4px 0;font-size:13px}
 .field{width:100%;min-height:44px;padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:#fff;font:500 14px var(--f-body);color:var(--ink)}
 .field::placeholder{color:var(--off)}

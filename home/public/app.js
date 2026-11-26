@@ -1481,7 +1481,7 @@ function devDetailHtml(d){
 }
 /* ---------- alarm page ---------- */
 // status comes live over SSE; the schedule and the alarms are fetched (on opening the page, after each change, and as alarms come in)
-const alarm={status:null,periods:[],away:[],items:[],more:false,today:0,loaded:false,error:null,busy:false};
+const alarm={status:null,periods:[],away:[],devices:[],items:[],more:false,today:0,loaded:false,error:null,busy:false};
 const PAGE=50;
 const startOfToday=()=>{const d=new Date();d.setHours(0,0,0,0);return d.getTime();};
 async function api(path,opts={}){
@@ -1496,8 +1496,8 @@ async function loadAlarm(){
     // keep as many as are already shown, so a refresh doesn't fold back pages the viewer loaded
     const n=Math.min(200,Math.max(PAGE,alarm.items.length));
     const [a,list]=await Promise.all([api(''),api(`/alarms?limit=${n}&since=${startOfToday()}`)]);
-    const {periods,away,...status}=a;
-    Object.assign(alarm,{status,periods,away,items:list.items,more:list.items.length===n,today:list.since,loaded:true,error:null});
+    const {periods,away,devices,...status}=a;
+    Object.assign(alarm,{status,periods,away,devices:devices||[],items:list.items,more:list.items.length===n,today:list.since,loaded:true,error:null});
   }catch(err){alarm.error=err.message;}
   render();
 }
@@ -1676,15 +1676,32 @@ function periodNote(){
   if(picker.end<picker.start)return `${days}, ${picker.start} to ${picker.end} the next morning.`;
   return `${days}, ${picker.start} to ${picker.end}.`;
 }
+/** the alarm's sensors: which ones it watches. Sensors with on/off readings (doors, windows, presence, rain) first;
+   the rest (switches, plugs, the bridge) only ever alarm by going offline. */
+function sensorsHtml(dis){
+  const watch=new Map(alarm.devices.map(r=>[r.device,r.armed]));
+  const rows=[...live.devices.values()].filter(d=>watch.has(d.id)).map(d=>{
+    const es=entitiesOf(d.id),sensor=es.some(e=>e.component==='binary_sensor'&&!e.diagnostic);
+    return {d,sensor,place:ROOM_BY_ID[d.room]?.name||OPEN_BY_ID[d.opening]?.name||'',on:watch.get(d.id)};
+  }).sort((a,b)=>(a.place||'~').localeCompare(b.place||'~')||a.d.label.localeCompare(b.d.label));
+  const row=({d,place,on})=>`<li class="mini arm-dev"><span><b class="arm-name">${esc(d.label)}</b>${place?`<small>${esc(place)}</small>`:''}</span>
+      <button class="sw${on?' on':''}" data-act="dev-arm" data-id="${esc(d.id)}" aria-pressed="${on}" aria-label="Alarm watches ${esc(d.label)}"${dis}>
+      <span class="knob"></span><span class="sw-word">${on?'Armed':'Off'}</span></button></li>`;
+  const group=(title,note,list)=>list.length?`<article class="panel-card"><span class="label">${title}</span><p class="note">${note}</p><ul class="minis">${list.map(row).join('')}</ul></article>`:'';
+  const sensors=rows.filter(r=>r.sensor),others=rows.filter(r=>!r.sensor);
+  return `<h2 class="section">Sensors</h2>
+    ${group('Sensors','While armed, one turning on (a door opening, someone detected) or going offline is an alarm. A sensor that’s off is ignored: nothing is logged.',sensors)}
+    ${group('Other devices','Switches, plugs and the rest: these alarm only by going offline.',others)}`;
+}
 function settingsHtml(){
-  if(!alarm.status)return `${headHtml('Settings','When the alarm arms')}<p class="empty">${alarm.error?esc(alarm.error):'Loading…'}</p>`;
+  if(!alarm.status)return `${headHtml('Settings','When the alarm arms, and what it watches')}<p class="empty">${alarm.error?esc(alarm.error):'Loading…'}</p>`;
   const dis=alarm.busy?' disabled':'';
   const periods=alarm.periods.map((p,i)=>`<li class="mini"><span><b class="period-days">${daysLabel(p.days)}</b> <span class="mono">${p.start} – ${p.end}</span>${p.end<p.start?' <small class="label" style="display:inline">next day</small>':''}</span>
       <button class="btn ghost" data-act="del-period" data-i="${i}" aria-label="Remove ${daysLabel(p.days)} ${p.start} to ${p.end}"${dis}>Remove</button></li>`).join('');
   const today=todayStr();
   const aways=alarm.away.map(a=>`<li class="mini"><span>${shortDate(a.from)}${a.to!==a.from?` – ${shortDate(a.to)}`:''}${a.note?` · ${esc(a.note)}`:''}${a.from<=today&&today<=a.to?' <b class="on">now</b>':a.to<today?' <b>past</b>':''}</span>
       <button class="btn ghost" data-act="del-away" data-id="${a.id}" aria-label="Remove away ${a.from} to ${a.to}"${dis}>Remove</button></li>`).join('');
-  return `${headHtml('Settings','When the alarm arms')}
+  return `${headHtml('Settings','When the alarm arms, and what it watches')}
     ${alarm.error?`<p class="note err-note" role="alert">${esc(alarm.error)}</p>`:''}
     <h2 class="section">Armed periods</h2>
     <article class="panel-card">
@@ -1710,7 +1727,8 @@ function settingsHtml(){
         <input class="field" type="text" id="away-note" maxlength="200" placeholder="Note, e.g. trip" value="${esc(picker.note)}" aria-label="Note">
         <button class="btn primary" data-act="add-away"${dis||(picker.from?'':' disabled')}>Add away days</button>
       </div>
-    </article>`;
+    </article>
+    ${sensorsHtml(dis)}`;
 }
 function bindAlarm(){
   panel.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
@@ -1721,6 +1739,8 @@ function bindAlarm(){
     else if(a==='del-period'){const list=alarm.periods.filter((_,i)=>i!==+b.dataset.i).map(({start,end,days})=>({start,end,days}));
       alarmDo(()=>api('/periods',{method:'PUT',body:JSON.stringify(list)}));}
     else if(a==='del-away')alarmDo(()=>api(`/away/${b.dataset.id}`,{method:'DELETE'}));
+    else if(a==='dev-arm'){const armed=b.getAttribute('aria-pressed')!=='true';
+      alarmDo(()=>api(`/devices/${encodeURIComponent(b.dataset.id)}`,{method:'PUT',body:JSON.stringify({armed})}));}
     else if(a==='day'){const d=b.dataset.v;picker.days=picker.days.includes(d)?picker.days.filter(x=>x!==d):[...picker.days,d];render();}
     else if(a==='days'){picker.days=[...PRESETS[b.dataset.v]];render();}
     else if(a==='tp-open'){picker.open=picker.open===b.dataset.v?null:b.dataset.v;picker.fresh=true;render();}

@@ -157,12 +157,6 @@ export function isRainFlag(e: Entity): boolean {
   return e.component === "binary_sensor" && !e.diagnostic && (e.id.endsWith("/rain") || /^rain$/i.test(e.name ?? ""));
 }
 
-/** A weather sensor (it has a rain flag): outdoor readings, never part of the alarm. */
-export function isWeatherDevice(deviceId: string): boolean {
-  for (const e of entities.values()) if (e.device === deviceId && isRainFlag(e)) return true;
-  return false;
-}
-
 export function snapshot() {
   return { connected, devices: [...devices.values()], entities: [...entities.values()] };
 }
